@@ -1,0 +1,31 @@
+<Project>
+  <!-- Central package management: versions live here, projects reference packages without a Version. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup Label="Runtime">
+    <PackageVersion Include="FluentValidation" Version="12.1.1" />
+    <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.20" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.20" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="9.0.20" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.20" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.20" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.20" />
+    <PackageVersion Include="Microsoft.Extensions.Identity.Stores" Version="9.0.20" />
+    <PackageVersion Include="Scalar.AspNetCore" Version="2.17.8" />
+  </ItemGroup>
+
+  <ItemGroup Label="Testing">
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.20" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.20" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="9.10.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
+    <PackageVersion Include="Shouldly" Version="4.3.0" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+</Project>

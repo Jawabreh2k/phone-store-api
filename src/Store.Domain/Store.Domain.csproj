@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The domain has no dependencies: no EF Core, no ASP.NET, no third-party packages. -->
+</Project>
