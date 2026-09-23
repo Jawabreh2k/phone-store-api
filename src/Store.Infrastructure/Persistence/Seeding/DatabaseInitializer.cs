@@ -95,6 +95,11 @@ public sealed partial class DatabaseInitializer(
             return;
         }
 
+        if ((await users.GetUsersInRoleAsync(Roles.Admin)).Count > 0)
+        {
+            return;
+        }
+
         var admin = new ApplicationUser
         {
             UserName = _options.AdminEmail,
