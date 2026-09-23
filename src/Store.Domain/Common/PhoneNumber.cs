@@ -12,6 +12,9 @@ public sealed record PhoneNumber
     public const int MaxLength = 16; // "+" and up to 15 digits (E.164)
     private const int MinDigits = 8;
     private const int MaxDigits = 15;
+    // Subscriber digits after the store's own country code (Jordan: 8 for landlines, 9 for mobiles).
+    // Foreign numbers only get the loose E.164 bounds: their national lengths vary too much.
+    private const int MinNationalDigits = 8;
 
     private PhoneNumber(string value) => Value = value;
 
@@ -57,7 +60,10 @@ public sealed record PhoneNumber
         // "+962 079…" and "962 079…" still carry the national trunk zero. It is not part of the subscriber number.
         e164Digits = DropTrunkZero(e164Digits, defaultCountryCode);
 
-        return e164Digits.Length is >= MinDigits and <= MaxDigits && e164Digits[0] != '0'
+        var tooShortForStoreCountry = e164Digits.StartsWith(defaultCountryCode, StringComparison.Ordinal)
+            && e164Digits.Length - defaultCountryCode.Length < MinNationalDigits;
+
+        return e164Digits.Length is >= MinDigits and <= MaxDigits && e164Digits[0] != '0' && !tooShortForStoreCountry
             ? new PhoneNumber("+" + e164Digits)
             : Invalid;
     }

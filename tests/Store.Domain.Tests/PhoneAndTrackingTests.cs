@@ -49,6 +49,25 @@ public class PhoneNumberTests
     }
 
     [Theory]
+    [InlineData("1234567")]          // became +9621234567 before the subscriber-length rule
+    [InlineData("0123 4567")]
+    [InlineData("+962 1234567")]
+    [InlineData("00962 1234567")]
+    [InlineData("962 0 1234567")]
+    [InlineData("079 12345")]
+    public void Create_RejectsTooShortNumbersForTheStoreCountry(string input)
+    {
+        PhoneNumber.Create(input, "962").Error.ShouldBe(PhoneNumber.Invalid);
+    }
+
+    [Fact]
+    public void Create_AcceptsStoreCountryLandlinesAndShortForeignNumbers()
+    {
+        PhoneNumber.Create("06 123 4567", "962").Value.Value.ShouldBe("+96261234567");
+        PhoneNumber.Create("+354 123 4567", "962").Value.Value.ShouldBe("+3541234567");
+    }
+
+    [Theory]
     [InlineData("079 123", "79123")]
     [InlineData("+962791", "962791")]
     [InlineData("07", null)]
