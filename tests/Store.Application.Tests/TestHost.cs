@@ -1,13 +1,17 @@
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using Store.Application.Abstractions;
+using Store.Application.Notifications;
 using Store.Domain.Common;
 using Store.Domain.Settings;
 using Store.Infrastructure;
-using Store.Infrastructure.Notifications;
+using Store.Infrastructure.Outbox;
 using Store.Infrastructure.Persistence;
 using Store.Infrastructure.Persistence.Seeding;
 
@@ -15,30 +19,37 @@ namespace Store.Application.Tests;
 
 /// <summary>
 /// Real application + persistence wiring over an in-memory SQLite database, so tests exercise
-/// handlers, validation decorators and EF mappings together. Only edge services are faked.
+/// handlers, validation decorators, EF mappings and the outbox together. Only edge services are faked:
+/// notification channels record what they were asked to send instead of sending it.
 /// </summary>
 public sealed class TestHost : IAsyncDisposable
 {
-    /// <summary>Storefront address that password reset emails link to.</summary>
+    /// <summary>Storefront address that emails link to.</summary>
     public const string StorefrontUrl = "https://shop.test";
 
     private readonly SqliteConnection _connection;
     private readonly ServiceProvider _provider;
     private int _orderNumber = 100_000;
 
-    private TestHost(SqliteConnection connection, ServiceProvider provider, DateTimeOffset clockStart)
+    private TestHost(SqliteConnection connection, ServiceProvider provider, DateTimeOffset clockStart, CapturingLoggerProvider logs)
     {
         _connection = connection;
         _provider = provider;
         Clock = new FakeTimeProvider(clockStart);
+        Logs = logs;
     }
 
     public FakeTimeProvider Clock { get; }
     public FakeCurrentUser User { get; } = new();
     public FakeLanguage Language { get; } = new();
     public FakeFileStorage Files { get; } = new();
-    public FakeStaffOrderAlerter StaffAlerts { get; } = new();
-    public FakeEmailSender Emails { get; } = new();
+    public FakeNotificationChannel Email { get; } = new(NotificationChannel.Email);
+    public FakeNotificationChannel WhatsApp { get; } = new(NotificationChannel.WhatsApp);
+
+    /// <summary>Every log line written through the app's loggers, formatted.</summary>
+    public CapturingLoggerProvider Logs { get; }
+
+    internal IServiceProvider Services => _provider;
 
     /// <summary>A fresh host and database. <paramref name="configure"/> has the last word on the services, e.g. to change an option for one test.</summary>
     public static async Task<TestHost> CreateAsync(bool withSampleCatalog = true, DateTimeOffset? clockStart = null, Action<IServiceCollection>? configure = null)
@@ -46,35 +57,40 @@ public sealed class TestHost : IAsyncDisposable
         var start = clockStart ?? new DateTimeOffset(2026, 9, 23, 9, 0, 0, TimeSpan.Zero);
         var connection = new SqliteConnection("DataSource=:memory:");
         await connection.OpenAsync();
+        var logs = new CapturingLoggerProvider();
 
         TestHost? host = null;
         var services = new ServiceCollection();
         services.AddApplication();
-        services.AddLogging();
-        services.AddScoped<AuditingInterceptor>();
+        services.AddLogging(b => b.AddProvider(logs).SetMinimumLevel(LogLevel.Trace));
+        services.AddPersistenceInterceptors();
         services.AddDbContext<AppDbContext>((sp, o) => o
             .UseSqlite(connection)
-            .AddInterceptors(sp.GetRequiredService<AuditingInterceptor>()));
+            .AddPersistenceInterceptors(sp));
         services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
         services.AddSingleton<TimeProvider>(_ => host!.Clock);
         services.AddSingleton<ICurrentUser>(_ => host!.User);
         services.AddSingleton<ILanguageProvider>(_ => host!.Language);
         services.AddSingleton<IOrderNumberGenerator>(_ => new SequentialOrderNumbers(host!));
         services.AddSingleton<IFileStorage>(_ => host!.Files);
-        services.AddSingleton<IStaffOrderAlerter>(_ => host!.StaffAlerts);
-        services.AddSingleton<IEmailSender>(_ => host!.Emails);
-        services.AddSingleton<IDeferredWork, InlineDeferredWork>();
 
         // Real ASP.NET Identity over the same database, so password reset runs end to end. Signing in needs an HTTP
         // request and stays untested here; AddAuthentication only supplies what SignInManager is built from.
         services.AddDataProtection().UseEphemeralDataProtectionProvider();
         services.AddAuthentication();
         services.AddIdentityStore();
-        services.AddScoped<IPasswordResetMailer, PasswordResetMailer>();
         services.Configure<StorefrontOptions>(o => o.BaseUrl = StorefrontUrl);
+
+        // The real outbox (protection, processor, metrics) with recording channels in place of SMTP / Twilio.
+        services.AddOutboxCore();
+        services.RemoveAll<INotificationChannel>();
+        services.AddSingleton<INotificationChannel>(_ => host!.Email);
+        services.AddSingleton<INotificationChannel>(_ => host!.WhatsApp);
+        services.Configure<NotificationOptions>(o => o.CustomerChannels.Add(NotificationChannel.Email));
+        services.AddOptions<OutboxOptions>();
         configure?.Invoke(services);
 
-        host = new TestHost(connection, services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true }), start);
+        host = new TestHost(connection, services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true }), start, logs);
 
         await using var scope = host._provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -117,6 +133,25 @@ public sealed class TestHost : IAsyncDisposable
         return await action(scope.ServiceProvider.GetRequiredService<AppDbContext>());
     }
 
+    /// <summary>Delivers everything due now (the fake clock does not move, so retries wait for the test to advance it).</summary>
+    public async Task<int> ProcessOutboxAsync()
+    {
+        var processor = _provider.GetRequiredService<OutboxProcessor>();
+        var total = 0;
+        int claimed;
+        do
+        {
+            claimed = await processor.ProcessBatchAsync(CancellationToken.None);
+            total += claimed;
+        }
+        while (claimed > 0);
+
+        return total;
+    }
+
+    /// <summary>A second, independent worker (its own <see cref="OutboxProcessor.WorkerId"/>), as on another instance.</summary>
+    internal OutboxProcessor NewWorker() => ActivatorUtilities.CreateInstance<OutboxProcessor>(_provider);
+
     public async ValueTask DisposeAsync()
     {
         await _provider.DisposeAsync();
@@ -143,49 +178,59 @@ public sealed class FakeLanguage : ILanguageProvider
     public Language Current { get; set; } = Language.En;
 }
 
-/// <summary>Runs deferred mail and alerts before the handler returns, and never lets them fail the request.</summary>
-internal sealed class InlineDeferredWork(IServiceScopeFactory scopes) : IDeferredWork
+/// <summary>Records what it is asked to send. <see cref="Results"/> scripts the answers (Sent once it runs out).</summary>
+public sealed class FakeNotificationChannel(NotificationChannel channel) : INotificationChannel
 {
-    public void Run(Func<IServiceProvider, CancellationToken, Task> work)
+    public NotificationChannel Channel => channel;
+    public List<NotificationEnvelope> Sent { get; } = [];
+    public Queue<DeliveryResult> Results { get; } = new();
+
+    /// <summary>Runs (once) during the next send, e.g. to let another worker try the message while this one holds the lease.</summary>
+    public Func<Task>? DuringSend { get; set; }
+
+    public async Task<DeliveryResult> SendAsync(NotificationEnvelope envelope, CancellationToken cancellationToken)
     {
-        try
+        if (DuringSend is { } during)
         {
-            using var scope = scopes.CreateScope();
-            work(scope.ServiceProvider, CancellationToken.None).GetAwaiter().GetResult();
+            DuringSend = null;
+            await during();
         }
-        catch (Exception)
+
+        var result = Results.Count > 0 ? Results.Dequeue() : DeliveryResult.Sent;
+        if (result.Outcome == DeliveryOutcome.Sent)
         {
-            // Same rule as production: a failed alert or email does not fail checkout or password reset.
+            Sent.Add(envelope);
         }
+
+        return result;
     }
 }
 
-public sealed class FakeStaffOrderAlerter : IStaffOrderAlerter
+public sealed class CapturingLoggerProvider : ILoggerProvider
 {
-    public bool ThrowOnAlert { get; set; }
-    public List<Guid> AlertedOrderIds { get; } = [];
+    private readonly ConcurrentQueue<string> _lines = new();
 
-    public Task AlertNewOrderAsync(Guid orderId, CancellationToken cancellationToken)
+    public IReadOnlyCollection<string> Lines => _lines;
+
+    public ILogger CreateLogger(string categoryName) => new Logger(categoryName, _lines);
+
+    public void Dispose()
     {
-        if (ThrowOnAlert)
-        {
-            throw new InvalidOperationException("Simulated alert failure.");
-        }
-
-        AlertedOrderIds.Add(orderId);
-        return Task.CompletedTask;
     }
-}
 
-/// <summary>Records mail instead of sending it.</summary>
-public sealed class FakeEmailSender : IEmailSender
-{
-    public List<EmailMessage> Sent { get; } = [];
-
-    public Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
+    private sealed class Logger(string category, ConcurrentQueue<string> lines) : ILogger
     {
-        Sent.Add(message);
-        return Task.CompletedTask;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            var structured = state is IEnumerable<KeyValuePair<string, object?>> values
+                ? string.Join(" ", values.Select(v => $"{v.Key}={v.Value}"))
+                : string.Empty;
+            lines.Enqueue($"{logLevel} {category}: {formatter(state, exception)} | {structured} {exception}");
+        }
     }
 }
 

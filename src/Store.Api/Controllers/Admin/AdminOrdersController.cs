@@ -5,6 +5,7 @@ using Store.Api.Contracts;
 using Store.Application.Abstractions;
 using Store.Application.Common;
 using Store.Application.Orders;
+using Store.Application.Outbox;
 
 namespace Store.Api.Controllers.Admin;
 
@@ -41,4 +42,12 @@ public sealed class AdminOrdersController : ApiControllerBase
         [FromServices] ICommandHandler<ChangeOrderStatusCommand> handler,
         CancellationToken ct) =>
         FromResult(await handler.Handle(new ChangeOrderStatusCommand(id, body.Status, body.Note), ct));
+
+    /// <summary>The order's outgoing messages and their delivery state (never their contents).</summary>
+    [HttpGet("{id:guid}/notifications")]
+    public async Task<IActionResult> Notifications(
+        Guid id,
+        [FromServices] IQueryHandler<GetOrderNotificationsQuery, IReadOnlyList<AdminNotificationDto>> handler,
+        CancellationToken ct) =>
+        FromResult(await handler.Handle(new GetOrderNotificationsQuery(id), ct));
 }

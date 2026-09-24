@@ -47,6 +47,8 @@ internal sealed class OrderConfiguration : IEntityTypeConfiguration<Order>
         builder.HasIndex(o => new { o.Status, o.PlacedAt });
         builder.Property(o => o.CustomerNote).HasMaxLength(Order.NoteMaxLength);
         builder.Property(o => o.CancellationReason).HasMaxLength(500);
+        builder.Property(o => o.Language).IsUnicode(false);
+        builder.Ignore(o => o.DomainEvents);
 
         // Accounts with orders cannot be hard-deleted; order history must survive.
         builder.HasOne<ApplicationUser>().WithMany().HasForeignKey(o => o.CustomerId).OnDelete(DeleteBehavior.Restrict);

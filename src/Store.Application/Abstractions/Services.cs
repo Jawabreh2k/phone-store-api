@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Store.Application.Outbox;
 using Store.Domain.Carts;
 using Store.Domain.Catalog;
 using Store.Domain.Common;
@@ -22,6 +23,7 @@ public interface IAppDbContext
     DbSet<Order> Orders { get; }
     DbSet<CustomerAddress> CustomerAddresses { get; }
     DbSet<StoreSettings> StoreSettings { get; }
+    DbSet<OutboxMessage> OutboxMessages { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

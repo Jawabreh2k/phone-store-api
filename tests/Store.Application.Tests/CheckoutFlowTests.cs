@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Store.Application.Carts;
 using Store.Application.Orders;
+using Store.Application.Outbox;
 using Store.Domain.Carts;
 using Store.Domain.Common;
 using Store.Domain.Orders;
@@ -34,16 +35,18 @@ public sealed class CheckoutFlowTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Checkout_StaffAlertFailure_DoesNotRollBackOrder()
+    public async Task Checkout_StaffAlertFailure_DoesNotTouchTheOrder()
     {
-        _host.StaffAlerts.ThrowOnAlert = true;
+        // No admin account exists here, so the alert has nobody to go to and parks.
         var cart = await _host.Send<AddToCartCommand, CartDto>(new(new CartOwner(null, null), await VariantId("RN13-128-BK"), 1));
         var placed = await _host.Send<PlaceOrderCommand, OrderPlacedDto>(Checkout(new CartOwner(null, cart.Value.CartId)));
+        await _host.ProcessOutboxAsync();
 
         placed.IsSuccess.ShouldBeTrue(placed.IsFailure ? placed.Error.Description : null);
-        (await _host.Db(db => db.Orders.CountAsync())).ShouldBe(1);
         var order = await _host.Db(db => db.Orders.SingleAsync());
         order.Status.ShouldBe(OrderStatus.Pending);
+        var alert = await _host.Db(db => db.OutboxMessages.SingleAsync(m => m.Type == OutboxTypes.StaffNewOrderAlert));
+        alert.Status.ShouldBe(OutboxStatus.Parked);
     }
 
     [Fact]

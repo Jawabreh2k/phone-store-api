@@ -74,6 +74,12 @@ public sealed record ShippingAddress
     public string? Details { get; private init; }
 }
 
+/// <summary>
+/// Raised whenever the order moves to a new status (not for the initial Pending entry written at checkout).
+/// <paramref name="HistoryEntryId"/> identifies the change, so reactions to it can be made idempotent.
+/// </summary>
+public sealed record OrderStatusChanged(Guid OrderId, Guid HistoryEntryId, OrderStatus Status, bool ByCustomer) : IDomainEvent;
+
 /// <summary>What the customer is buying, priced at the moment of checkout.</summary>
 public sealed record OrderLineInput(
     Guid ProductId,

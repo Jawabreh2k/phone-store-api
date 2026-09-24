@@ -1,7 +1,10 @@
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Store.Application.Abstractions;
+using Store.Application.Notifications;
+using Store.Application.Outbox;
 using Store.Domain.Carts;
 using Store.Domain.Catalog;
 using Store.Domain.Common;
@@ -13,7 +16,7 @@ using Store.Infrastructure.Identity;
 namespace Store.Infrastructure.Persistence;
 
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
-    : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>(options), IAppDbContext
+    : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>(options), IAppDbContext, IDataProtectionKeyContext
 {
     public const string OrderNumberSequence = "OrderNumbers";
 
@@ -25,6 +28,58 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
     public DbSet<StoreSettings> StoreSettings => Set<StoreSettings>();
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
+
+    /// <summary>The Data Protection key ring, shared by every API instance so each can read what another protected.</summary>
+    public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
+
+    /// <summary>
+    /// Saves, and makes a duplicate outbox message a no-op: when the save fails and some new outbox rows carry a
+    /// <see cref="OutboxMessage.DeduplicationKey"/> that is already stored, those rows are dropped and the save runs once
+    /// more, so the business change still commits. Any other failure is rethrown untouched.
+    /// </summary>
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            if (!await DetachStoredDuplicatesAsync(cancellationToken))
+            {
+                throw;
+            }
+        }
+
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private async Task<bool> DetachStoredDuplicatesAsync(CancellationToken cancellationToken)
+    {
+        var added = ChangeTracker.Entries<OutboxMessage>().Where(e => e.State == EntityState.Added).ToList();
+        if (added.Count == 0)
+        {
+            return false;
+        }
+
+        var keys = added.Select(e => e.Entity.DeduplicationKey).ToList();
+        var stored = await OutboxMessages.AsNoTracking()
+            .Where(m => keys.Contains(m.DeduplicationKey))
+            .Select(m => m.DeduplicationKey)
+            .ToListAsync(cancellationToken);
+        if (stored.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var entry in added.Where(e => stored.Contains(e.Entity.DeduplicationKey)))
+        {
+            entry.State = EntityState.Detached;
+        }
+
+        return true;
+    }
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -58,6 +113,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options)
         configurationBuilder.Properties<PaymentMethod>().HaveConversion<string>().HaveMaxLength(30);
         configurationBuilder.Properties<PaymentStatus>().HaveConversion<string>().HaveMaxLength(20);
         configurationBuilder.Properties<Domain.Common.Language>().HaveConversion<string>().HaveMaxLength(5);
+        configurationBuilder.Properties<OutboxStatus>().HaveConversion<string>().HaveMaxLength(20);
+        configurationBuilder.Properties<NotificationChannel>().HaveConversion<string>().HaveMaxLength(20);
+        configurationBuilder.Properties<NotificationTemplate>().HaveConversion<string>().HaveMaxLength(OutboxMessage.TemplateMaxLength);
 
         // SQLite (tests only) cannot order DateTimeOffset or aggregate decimal; use sortable/aggregatable stand-ins there.
         if (Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite")

@@ -10,7 +10,7 @@ namespace Store.Domain.Orders;
 ///               Pending / Confirmed → Cancelled
 ///               Delivered → Returned
 /// </summary>
-public sealed class Order : AuditableEntity
+public sealed class Order : AuditableEntity, IHasDomainEvents
 {
     public const int NoteMaxLength = 1000;
 
@@ -26,14 +26,16 @@ public sealed class Order : AuditableEntity
 
     private readonly List<OrderItem> _items = [];
     private readonly List<OrderStatusChange> _history = [];
+    private readonly List<IDomainEvent> _domainEvents = [];
 
     private Order() { } // EF
 
-    private Order(string orderNumber, string trackingTokenHash, string currencyCode, Guid? customerId, ContactInfo contact, ShippingAddress address, string? customerNote, decimal shippingFee, DateTimeOffset placedAt)
+    private Order(string orderNumber, string trackingTokenHash, string currencyCode, Language language, Guid? customerId, ContactInfo contact, ShippingAddress address, string? customerNote, decimal shippingFee, DateTimeOffset placedAt)
     {
         OrderNumber = orderNumber;
         TrackingTokenHash = trackingTokenHash;
         CurrencyCode = currencyCode;
+        Language = language;
         CustomerId = customerId;
         Contact = contact;
         ShippingAddress = address;
@@ -57,6 +59,9 @@ public sealed class Order : AuditableEntity
     /// </summary>
     public string CurrencyCode { get; private set; } = null!;
 
+    /// <summary>Language the customer shopped in; messages about the order are written in it.</summary>
+    public Language Language { get; private set; }
+
     /// <summary>Null for guest orders.</summary>
     public Guid? CustomerId { get; private set; }
 
@@ -74,11 +79,15 @@ public sealed class Order : AuditableEntity
 
     public IReadOnlyList<OrderItem> Items => _items;
     public IReadOnlyList<OrderStatusChange> History => _history;
+    public IReadOnlyList<IDomainEvent> DomainEvents => _domainEvents;
+
+    public void ClearDomainEvents() => _domainEvents.Clear();
 
     public static Result<Order> Place(
         string orderNumber,
         string trackingTokenHash,
         string currencyCode,
+        Language language,
         Guid? customerId,
         ContactInfo contact,
         ShippingAddress address,
@@ -108,7 +117,7 @@ public sealed class Order : AuditableEntity
             return OrderErrors.InvalidLine;
         }
 
-        var order = new Order(orderNumber, trackingTokenHash, currencyCode, customerId, contact, address, customerNote, shippingFee, now);
+        var order = new Order(orderNumber, trackingTokenHash, currencyCode, language, customerId, contact, address, customerNote, shippingFee, now);
         order._items.AddRange(lines.Select(l => new OrderItem(order.Id, l)));
         order.Subtotal = order._items.Sum(i => i.LineTotal);
         order.Total = order.Subtotal + shippingFee;
@@ -165,14 +174,14 @@ public sealed class Order : AuditableEntity
         }
 
         CancellationReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
-        return TransitionTo(OrderStatus.Cancelled, byUserId, now, CancellationReason);
+        return TransitionTo(OrderStatus.Cancelled, byUserId, now, CancellationReason, byCustomer);
     }
 
     public bool CanTransitionTo(OrderStatus next) => AllowedTransitions[Status].Contains(next);
 
     public IReadOnlyList<OrderStatus> NextStatuses => AllowedTransitions[Status];
 
-    private Result TransitionTo(OrderStatus next, Guid byUserId, DateTimeOffset now, string? note)
+    private Result TransitionTo(OrderStatus next, Guid byUserId, DateTimeOffset now, string? note, bool byCustomer = false)
     {
         if (!CanTransitionTo(next))
         {
@@ -180,7 +189,9 @@ public sealed class Order : AuditableEntity
         }
 
         Status = next;
-        _history.Add(new OrderStatusChange(Id, next, now, byUserId, note));
+        var change = new OrderStatusChange(Id, next, now, byUserId, note);
+        _history.Add(change);
+        _domainEvents.Add(new OrderStatusChanged(Id, change.Id, next, byCustomer));
         return Result.Success();
     }
 }

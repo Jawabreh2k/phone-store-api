@@ -2,6 +2,8 @@ using FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Store.Application.Abstractions;
 using Store.Application.Carts;
+using Store.Application.Notifications;
+using Store.Application.Outbox;
 
 namespace Store.Application;
 
@@ -32,6 +34,16 @@ public static class DependencyInjection
         }
 
         services.AddScoped<CartReader>();
+
+        services.AddScoped<IOutbox, Outbox.Outbox>();
+        services.AddScoped<OrderNotifications>();
+        services.AddScoped<IDomainEventDispatcher, DomainEventDispatcher>();
+        services.AddScoped<IOutboxMessageDeliverer, CustomerOrderNotificationHandler>();
+        services.AddScoped<IOutboxMessageDeliverer, StaffNewOrderAlertHandler>();
+        services.AddScoped<IOutboxMessageDeliverer, PasswordResetEmailHandler>();
+        services.AddOptions<NotificationOptions>();
+        services.AddOptions<StorefrontOptions>();
+
         // Parameterised validators (e.g. LocalizedTextValidator(maxLength)) are child validators built inline, not DI services.
         services.AddValidatorsFromAssembly(
             assembly,

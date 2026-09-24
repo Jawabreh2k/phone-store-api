@@ -7,8 +7,8 @@ using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Store.Application.Abstractions;
+using Store.Application.Notifications;
 using Store.Domain.Common;
-using Store.Infrastructure.Notifications;
 
 namespace Store.Infrastructure.Identity;
 
@@ -16,6 +16,7 @@ internal sealed class IdentityService(
     UserManager<ApplicationUser> users,
     SignInManager<ApplicationUser> signIn,
     IOptions<StorefrontOptions> storefront,
+    IOptions<DataProtectionTokenProviderOptions> tokens,
     TimeProvider clock) : IIdentityService
 {
     /// <summary>OpenID Connect claim an external provider uses to vouch that the user owns the email address.</summary>
@@ -76,6 +77,17 @@ internal sealed class IdentityService(
         return user is null ? null : await ToProfileAsync(user);
     }
 
+    public async Task<IReadOnlyList<string>> GetAdminEmailsAsync(CancellationToken cancellationToken)
+    {
+        var admins = await users.GetUsersInRoleAsync(Roles.Admin);
+        return admins
+            .Select(u => u.Email)
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Select(e => e!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public async Task<Result<UserProfile>> UpdateProfileAsync(Guid userId, string fullName, string? phoneNumber, Language preferredLanguage, CancellationToken cancellationToken)
     {
         var user = await users.FindByIdAsync(userId.ToString());
@@ -121,7 +133,7 @@ internal sealed class IdentityService(
         }
 
         var token = await users.GeneratePasswordResetTokenAsync(user);
-        return new PasswordResetTicket(user.Email, user.FullName, user.PreferredLanguage, EncodeToken(token));
+        return new PasswordResetTicket(user.Email, user.FullName, user.PreferredLanguage, EncodeToken(token), tokens.Value.TokenLifespan);
     }
 
     public async Task<Result> ResetPasswordAsync(string email, string token, string newPassword, CancellationToken cancellationToken)
@@ -366,7 +378,14 @@ internal sealed class IdentityService(
     }
 
     private async Task<UserProfile> ToProfileAsync(ApplicationUser user) =>
-        new(user.Id, user.Email!, user.FullName, user.PhoneNumber, user.PreferredLanguage, [.. await users.GetRolesAsync(user)]);
+        new(
+            user.Id,
+            user.Email!,
+            user.FullName,
+            user.PhoneNumber,
+            user.PreferredLanguage,
+            [.. await users.GetRolesAsync(user)],
+            [.. (await users.GetLoginsAsync(user)).Select(l => l.LoginProvider).Distinct()]);
 
     private static Error ToError(IdentityResult result) =>
         result.Errors.Any() && result.Errors.All(e => PasswordPolicyErrors.Contains(e.Code))

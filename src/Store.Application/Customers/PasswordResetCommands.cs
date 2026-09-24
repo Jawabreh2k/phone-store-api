@@ -1,6 +1,7 @@
 using FluentValidation;
-using Microsoft.Extensions.DependencyInjection;
 using Store.Application.Abstractions;
+using Store.Application.Notifications;
+using Store.Application.Outbox;
 using Store.Domain.Common;
 
 namespace Store.Application.Customers;
@@ -19,11 +20,11 @@ public sealed class ForgotPasswordValidator : AbstractValidator<ForgotPasswordCo
 /// Emails a reset link when an account has this email. The answer is the same when none does,
 /// so the endpoint cannot be used to discover accounts.
 /// </summary>
-internal sealed class ForgotPasswordHandler(IIdentityService identity, IDeferredWork deferred) : ICommandHandler<ForgotPasswordCommand>
+internal sealed class ForgotPasswordHandler(IIdentityService identity, IAppDbContext db, IOutbox outbox, TimeProvider clock) : ICommandHandler<ForgotPasswordCommand>
 {
     /// <summary>
-    /// Both answers wait out at least this long. Token generation is local; the reset email is queued,
-    /// so a registered address is not the one that sits through an SMTP handshake.
+    /// Both answers wait out at least this long. Token generation and the outbox write are local; the email itself
+    /// goes out later, so a registered address is not the one that sits through an SMTP handshake.
     /// </summary>
     private static readonly TimeSpan MinimumResponse = TimeSpan.FromMilliseconds(200);
 
@@ -32,7 +33,15 @@ internal sealed class ForgotPasswordHandler(IIdentityService identity, IDeferred
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         if (await identity.CreatePasswordResetAsync(command.Email, cancellationToken) is { } ticket)
         {
-            deferred.Run((sp, ct) => sp.GetRequiredService<IPasswordResetMailer>().SendResetLinkAsync(ticket, ct));
+            // Every request is its own message, so the key is unique; the token rides encrypted, never in the payload.
+            outbox.Enqueue(new OutboxEntry(
+                OutboxTypes.PasswordResetEmail,
+                new PasswordResetPayload(ticket.Email, ticket.FullName, ticket.PreferredLanguage, clock.GetUtcNow() + ticket.ValidFor),
+                $"account:password-reset:{Guid.CreateVersion7()}",
+                Channel: NotificationChannel.Email,
+                Template: NotificationTemplate.PasswordReset,
+                Secret: ticket.Token));
+            await db.SaveChangesAsync(cancellationToken);
         }
 
         var remaining = MinimumResponse - System.Diagnostics.Stopwatch.GetElapsedTime(started);

@@ -1,9 +1,11 @@
 using System.Text.RegularExpressions;
 using System.Web;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Store.Application.Abstractions;
 using Store.Application.Customers;
+using Store.Application.Notifications;
 using Store.Domain.Common;
 using Store.Infrastructure.Identity;
 
@@ -30,20 +32,24 @@ public sealed class PasswordResetTests : IAsyncLifetime
     public async Task ForgotPassword_UnknownEmail_SucceedsWithoutSendingMail()
     {
         var result = await _host.Send(new ForgotPasswordCommand("nobody@example.com"));
+        await _host.ProcessOutboxAsync();
 
         result.IsSuccess.ShouldBeTrue();
-        _host.Emails.Sent.ShouldBeEmpty();
+        _host.Email.Sent.ShouldBeEmpty();
+        (await _host.Db(db => db.OutboxMessages.CountAsync())).ShouldBe(0);
     }
 
     [Fact]
     public async Task ForgotPassword_KnownEmail_MailsALinkToTheStorefrontResetPage()
     {
         (await _host.Send(new ForgotPasswordCommand(Email))).IsSuccess.ShouldBeTrue();
+        await _host.ProcessOutboxAsync();
 
-        var mail = _host.Emails.Sent.ShouldHaveSingleItem();
-        mail.To.ShouldBe([Email]);
+        var mail = _host.Email.Sent.ShouldHaveSingleItem();
+        mail.Recipients.ShouldBe([Email]);
         mail.Subject.ShouldBe("Reset your PhoneStore password");
-        mail.Body.ShouldStartWith("Hi Layla Haddad,");
+        mail.TextBody.ShouldStartWith("Hi Layla Haddad,");
+        mail.HtmlBody.ShouldNotBeNull();
 
         var link = ResetLink(mail);
         link.GetLeftPart(UriPartial.Path).ShouldBe($"{TestHost.StorefrontUrl}/en/reset-password");
@@ -57,8 +63,9 @@ public sealed class PasswordResetTests : IAsyncLifetime
         await CreateUserAsync("sara@example.com", "سارة", Language.Ar);
 
         (await _host.Send(new ForgotPasswordCommand("sara@example.com"))).IsSuccess.ShouldBeTrue();
+        await _host.ProcessOutboxAsync();
 
-        var mail = _host.Emails.Sent.ShouldHaveSingleItem();
+        var mail = _host.Email.Sent.ShouldHaveSingleItem();
         mail.Subject.ShouldBe("إعادة تعيين كلمة المرور في فون ستور");
         ResetLink(mail).AbsolutePath.ShouldBe("/ar/reset-password");
     }
@@ -103,7 +110,13 @@ public sealed class PasswordResetTests : IAsyncLifetime
             withSampleCatalog: false,
             configure: services => services.Configure<DataProtectionTokenProviderOptions>(o => o.TokenLifespan = TimeSpan.Zero));
         await CreateUserAsync(Email, "Layla Haddad", Language.En);
-        var token = await RequestResetTokenAsync();
+
+        // The outbox will not mail a link that has already expired, so take the token straight from Identity.
+        (await _host.Send(new ForgotPasswordCommand(Email))).IsSuccess.ShouldBeTrue();
+        await _host.ProcessOutboxAsync();
+        _host.Email.Sent.ShouldBeEmpty();
+        (await _host.Db(db => db.OutboxMessages.SingleAsync())).Status.ShouldBe(Outbox.OutboxStatus.Parked);
+        var token = (await _host.Run<IIdentityService, PasswordResetTicket?>(i => i.CreatePasswordResetAsync(Email, CancellationToken.None)))!.Token;
 
         var result = await _host.Send(new ResetPasswordCommand(Email, token, NewPassword));
 
@@ -156,11 +169,12 @@ public sealed class PasswordResetTests : IAsyncLifetime
     private async Task<string> RequestResetTokenAsync()
     {
         (await _host.Send(new ForgotPasswordCommand(Email))).IsSuccess.ShouldBeTrue();
-        return HttpUtility.ParseQueryString(ResetLink(_host.Emails.Sent[^1]).Query)["token"]!;
+        await _host.ProcessOutboxAsync();
+        return HttpUtility.ParseQueryString(ResetLink(_host.Email.Sent[^1]).Query)["token"]!;
     }
 
-    private static Uri ResetLink(EmailMessage mail) =>
-        new(Regex.Match(mail.Body, $@"{Regex.Escape(TestHost.StorefrontUrl)}\S+").Value);
+    private static Uri ResetLink(NotificationEnvelope mail) =>
+        new(Regex.Match(mail.TextBody, $@"{Regex.Escape(TestHost.StorefrontUrl)}\S+").Value);
 
     private Task<bool> PasswordIsAsync(string password) =>
         _host.Run<UserManager<ApplicationUser>, bool>(async users => await users.CheckPasswordAsync((await users.FindByEmailAsync(Email))!, password));

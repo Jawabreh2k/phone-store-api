@@ -1,10 +1,9 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Store.Application.Abstractions;
 using Store.Application.Carts;
 using Store.Application.Common;
+using Store.Application.Notifications;
 using Store.Domain.Carts;
 using Store.Domain.Common;
 using Store.Domain.Customers;
@@ -57,15 +56,16 @@ public sealed class PlaceOrderValidator : AbstractValidator<PlaceOrderCommand>
 }
 
 /// <summary>
-/// Turns the cart into an order in one transaction: re-prices every line from the catalogue,
-/// reserves stock, snapshots names and prices onto the order and empties the cart.
+/// Turns the cart into an order in one transaction: re-prices every line from the catalogue, reserves stock,
+/// snapshots names and prices onto the order, empties the cart and enqueues the order messages (customer and staff).
 /// </summary>
-internal sealed partial class PlaceOrderHandler(
+internal sealed class PlaceOrderHandler(
     IAppDbContext db,
     IOrderNumberGenerator orderNumbers,
-    IDeferredWork deferred,
-    TimeProvider clock,
-    ILogger<PlaceOrderHandler> logger) : ICommandHandler<PlaceOrderCommand, OrderPlacedDto>
+    IIdentityService identity,
+    ILanguageProvider requestLanguage,
+    OrderNotifications notifications,
+    TimeProvider clock) : ICommandHandler<PlaceOrderCommand, OrderPlacedDto>
 {
     public static readonly Error StockChanged = Error.Conflict(
         "orders.stock_changed", "Stock changed while you were checking out. Please review your cart and try again.");
@@ -105,6 +105,7 @@ internal sealed partial class PlaceOrderHandler(
             await orderNumbers.NextAsync(cancellationToken),
             OrderTrackingToken.Hash(trackingToken),
             settings.CurrencyCode,
+            await OrderLanguageAsync(command.Owner.CustomerId, cancellationToken),
             command.Owner.CustomerId,
             new ContactInfo(command.FullName, phone.Value, command.Email),
             address,
@@ -127,6 +128,9 @@ internal sealed partial class PlaceOrderHandler(
             await SaveAddressAsync(customerId, command.FullName, phone.Value, address, cancellationToken);
         }
 
+        // Committed with the order or not at all; the outbox worker sends them after the save.
+        notifications.Placed(order, trackingToken);
+
         try
         {
             await db.SaveChangesAsync(cancellationToken);
@@ -134,25 +138,18 @@ internal sealed partial class PlaceOrderHandler(
         catch (DbUpdateConcurrencyException)
         {
             // Another checkout or a stock adjustment touched the same variant between our read and write.
-            // Nothing was saved; the client re-reads the cart and retries.
+            // Nothing was saved, messages included; the client re-reads the cart and retries.
             return StockChanged;
         }
 
-        var orderId = order.Id;
-        deferred.Run(async (sp, ct) =>
-        {
-            try
-            {
-                await sp.GetRequiredService<IStaffOrderAlerter>().AlertNewOrderAsync(orderId, ct);
-            }
-            catch (Exception ex)
-            {
-                LogStaffAlertFailed(logger, orderId, ex);
-            }
-        });
-
         return new OrderPlacedDto(order.Id, order.OrderNumber, trackingToken, order.Total, order.CurrencyCode);
     }
+
+    /// <summary>Signed-in customers hear from us in the language on their profile; guests in the one they shopped in.</summary>
+    private async Task<Language> OrderLanguageAsync(Guid? customerId, CancellationToken cancellationToken) =>
+        customerId is { } id && await identity.FindAsync(id, cancellationToken) is { } profile
+            ? profile.PreferredLanguage
+            : requestLanguage.Current;
 
     private async Task<Result<List<OrderLineInput>>> BuildLinesAndReserveStockAsync(Cart cart, CancellationToken cancellationToken)
     {
@@ -215,7 +212,4 @@ internal sealed partial class PlaceOrderHandler(
 
         db.CustomerAddresses.Add(saved);
     }
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "Failed to alert staff about new order {OrderId}.")]
-    private static partial void LogStaffAlertFailed(ILogger logger, Guid orderId, Exception exception);
 }

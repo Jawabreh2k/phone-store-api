@@ -17,6 +17,7 @@ public class OrderTests
         "100001",
         TokenHash,
         "JOD",
+        Language.Ar,
         customerId: Guid.NewGuid(),
         new ContactInfo("Sara", Phone, null),
         new ShippingAddress("Amman", "Abdoun", "Street 1", null, null),
@@ -40,13 +41,44 @@ public class OrderTests
         order.CustomerNote.ShouldBe("ring twice");
         order.History.Single().Status.ShouldBe(OrderStatus.Pending);
         order.CurrencyCode.ShouldBe("JOD");
+        order.Language.ShouldBe(Language.Ar);
         order.Contact.Phone.ShouldBe("+962790000000");
+        order.DomainEvents.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void EachTransition_RaisesOneStatusChangedEvent_ForItsHistoryEntry()
+    {
+        var order = PlaceOrder();
+
+        order.Confirm(Staff, Now);
+        order.Cancel(Staff, byCustomer: false, "out of stock", Now);
+        order.Ship(Staff, Now); // invalid: raises nothing
+
+        order.DomainEvents.ShouldBe(
+        [
+            new OrderStatusChanged(order.Id, order.History[1].Id, OrderStatus.Confirmed, ByCustomer: false),
+            new OrderStatusChanged(order.Id, order.History[2].Id, OrderStatus.Cancelled, ByCustomer: false),
+        ]);
+
+        order.ClearDomainEvents();
+        order.DomainEvents.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void CustomerCancel_IsMarkedOnTheEvent()
+    {
+        var order = PlaceOrder();
+
+        order.Cancel(Guid.NewGuid(), byCustomer: true, null, Now);
+
+        order.DomainEvents.OfType<OrderStatusChanged>().Single().ByCustomer.ShouldBeTrue();
     }
 
     [Fact]
     public void Place_WithoutLines_Fails()
     {
-        var result = Order.Place("1", TokenHash, "JOD", null, new ContactInfo("a", Phone, null),
+        var result = Order.Place("1", TokenHash, "JOD", Language.En, null, new ContactInfo("a", Phone, null),
             new ShippingAddress("c", "a", "s", null, null), [], 0m, null, Now);
 
         result.Error.ShouldBe(OrderErrors.NoItems);
@@ -58,7 +90,7 @@ public class OrderTests
     [InlineData("")]
     public void Place_RequiresIsoCurrency(string currency)
     {
-        var result = Order.Place("1", TokenHash, currency, null, new ContactInfo("a", Phone, null),
+        var result = Order.Place("1", TokenHash, currency, Language.En, null, new ContactInfo("a", Phone, null),
             new ShippingAddress("c", "a", "s", null, null),
             [new OrderLineInput(Guid.NewGuid(), Guid.NewGuid(), "A", new("P", "ه"), new("-", "-"), null, 1m, 1)],
             0m, null, Now);

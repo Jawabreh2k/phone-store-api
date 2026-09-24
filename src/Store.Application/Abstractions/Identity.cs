@@ -14,12 +14,20 @@ public static class ExternalProviders
     public const string Google = "Google";
 }
 
-public sealed record UserProfile(Guid Id, string Email, string FullName, string? PhoneNumber, Language PreferredLanguage, IReadOnlyList<string> Roles);
+/// <summary>The signed-in user. <c>ConnectedLogins</c> lists the external providers (<see cref="ExternalProviders"/>) the account can sign in with.</summary>
+public sealed record UserProfile(
+    Guid Id,
+    string Email,
+    string FullName,
+    string? PhoneNumber,
+    Language PreferredLanguage,
+    IReadOnlyList<string> Roles,
+    IReadOnlyList<string> ConnectedLogins);
 
 public sealed record NewUser(string Email, string Password, string FullName, string? PhoneNumber, Language PreferredLanguage);
 
-/// <summary>What a password reset email needs. <see cref="Token"/> is already URL-safe.</summary>
-public sealed record PasswordResetTicket(string Email, string FullName, Language PreferredLanguage, string Token);
+/// <summary>What a password reset email needs. <see cref="Token"/> is already URL-safe and stops working after <see cref="ValidFor"/>.</summary>
+public sealed record PasswordResetTicket(string Email, string FullName, Language PreferredLanguage, string Token, TimeSpan ValidFor);
 
 /// <summary>
 /// Account management and sign-in, implemented with ASP.NET Core Identity in Infrastructure.
@@ -31,6 +39,9 @@ public interface IIdentityService
     Task<Result<UserProfile>> SignInAsync(string email, string password, bool rememberMe, CancellationToken cancellationToken);
     Task SignOutAsync();
     Task<UserProfile?> FindAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// <summary>Distinct email addresses of every admin, for staff alerts.</summary>
+    Task<IReadOnlyList<string>> GetAdminEmailsAsync(CancellationToken cancellationToken);
     Task<Result<UserProfile>> UpdateProfileAsync(Guid userId, string fullName, string? phoneNumber, Language preferredLanguage, CancellationToken cancellationToken);
     Task<Result> ChangePasswordAsync(Guid userId, string currentPassword, string newPassword, CancellationToken cancellationToken);
 

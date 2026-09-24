@@ -1,12 +1,18 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Store.Application.Abstractions;
+using Store.Application.Notifications;
 using Store.Infrastructure.Identity;
 using Store.Infrastructure.Notifications;
+using Store.Infrastructure.Outbox;
 using Store.Infrastructure.Persistence;
 using Store.Infrastructure.Persistence.Seeding;
 using Store.Infrastructure.Storage;
@@ -22,16 +28,21 @@ public static class DependencyInjection
         var connectionString = configuration.GetConnectionString("Store")
             ?? throw new InvalidOperationException("Connection string 'Store' is not configured.");
 
-        services.AddScoped<AuditingInterceptor>();
+        services.AddPersistenceInterceptors();
         services.AddDbContext<AppDbContext>((sp, options) => options
             .UseSqlServer(connectionString, sql =>
             {
                 sql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
                 sql.EnableRetryOnFailure(maxRetryCount: 3);
             })
-            .AddInterceptors(sp.GetRequiredService<AuditingInterceptor>()));
+            .AddPersistenceInterceptors(sp));
 
         services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
+
+        // One key ring for every instance: an outbox secret protected by one API instance is sent by another.
+        services.AddDataProtection()
+            .SetApplicationName("PhoneStore")
+            .PersistKeysToDbContext<AppDbContext>();
         services.AddScoped<IOrderNumberGenerator, SqlOrderNumberGenerator>();
 
         services.AddIdentity(configuration, environment);
@@ -43,14 +54,94 @@ public static class DependencyInjection
 
         services.Configure<SeedOptions>(configuration.GetSection(SeedOptions.Section));
         services.Configure<StorefrontOptions>(configuration.GetSection(StorefrontOptions.Section));
-        services.AddScoped<IEmailSender, SmtpEmailSender>();
-        services.AddScoped<IStaffOrderAlerter, SmtpStaffOrderAlerter>();
-        services.AddSingleton<DeferredWorkQueue>();
-        services.AddSingleton<IDeferredWork>(sp => sp.GetRequiredService<DeferredWorkQueue>());
-        services.AddHostedService(sp => sp.GetRequiredService<DeferredWorkQueue>());
-        services.AddScoped<IPasswordResetMailer, PasswordResetMailer>();
+        services.AddNotifications(configuration, environment);
         services.AddScoped<DatabaseInitializer>();
         return services;
+    }
+
+    /// <summary>Adds the outbox health check (Degraded when delivery falls behind) to the app's health checks.</summary>
+    public static IHealthChecksBuilder AddOutboxHealthCheck(this IHealthChecksBuilder builder) =>
+        builder.AddCheck<OutboxHealthCheck>(OutboxHealthCheck.Name, HealthStatus.Degraded, ["outbox"]);
+
+    /// <summary>The save-time interceptors: auditing, and domain events to outbox messages.</summary>
+    internal static void AddPersistenceInterceptors(this IServiceCollection services)
+    {
+        services.AddScoped<AuditingInterceptor>();
+        services.AddScoped<DomainEventsInterceptor>();
+    }
+
+    internal static DbContextOptionsBuilder AddPersistenceInterceptors(this DbContextOptionsBuilder options, IServiceProvider services) =>
+        options.AddInterceptors(services.GetRequiredService<AuditingInterceptor>(), services.GetRequiredService<DomainEventsInterceptor>());
+
+    /// <summary>
+    /// The outbox machinery shared by the app and the application tests: secret protection, processing, metrics and the
+    /// email channel. The hosted workers and SMS / WhatsApp channels are added by <see cref="AddNotifications"/>.
+    /// </summary>
+    internal static void AddOutboxCore(this IServiceCollection services)
+    {
+        services.AddMetrics();
+        services.AddSingleton<OutboxMetrics>();
+        services.AddSingleton<ISecretProtector, DataProtectionSecretProtector>();
+        services.AddSingleton<OutboxProcessor>();
+        services.AddSingleton<OutboxCleanupWorker>();
+        services.AddScoped<INotificationChannel, SmtpEmailChannel>();
+    }
+
+    private static void AddNotifications(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    {
+        MessagingOptions.RejectSecretsInAppSettings(configuration);
+
+        services.AddOptions<OutboxOptions>()
+            .Bind(configuration.GetSection(OutboxOptions.Section))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<OutboxOptions>>(new OutboxOptionsValidator());
+
+        services.AddOptions<NotificationOptions>()
+            .Bind(configuration.GetSection(NotificationOptions.Section))
+            .ValidateOnStart();
+
+        services.AddOptions<MessagingOptions>()
+            .Bind(configuration.GetSection(MessagingOptions.Section))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<MessagingOptions>>(sp =>
+            new MessagingOptionsValidator(sp.GetRequiredService<IOptions<NotificationOptions>>(), environment.IsDevelopment()));
+
+        services.AddOutboxCore();
+        services.AddHostedService<OutboxWorker>();
+        services.AddHostedService(sp => sp.GetRequiredService<OutboxCleanupWorker>());
+
+        var provider = configuration.GetSection(MessagingOptions.Section).Get<MessagingOptions>()?.Provider ?? MessagingProvider.Log;
+        if (provider == MessagingProvider.Twilio)
+        {
+            services.AddHttpClient(TwilioMessagingChannel.HttpClientName, c => c.Timeout = TimeSpan.FromSeconds(30));
+            foreach (var channel in (NotificationChannel[])[NotificationChannel.Sms, NotificationChannel.WhatsApp])
+            {
+                services.AddScoped<INotificationChannel>(sp => new TwilioMessagingChannel(
+                    channel, sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<IOptions<MessagingOptions>>()));
+            }
+        }
+        else
+        {
+            foreach (var channel in (NotificationChannel[])[NotificationChannel.Sms, NotificationChannel.WhatsApp])
+            {
+                services.AddScoped<INotificationChannel>(sp => new LogMessagingChannel(
+                    channel, sp.GetRequiredService<ILogger<LogMessagingChannel>>()));
+            }
+        }
+    }
+
+    private sealed class OutboxOptionsValidator : IValidateOptions<OutboxOptions>
+    {
+        public ValidateOptionsResult Validate(string? name, OutboxOptions options) =>
+            options.Validate().ToList() is { Count: > 0 } errors ? ValidateOptionsResult.Fail(errors) : ValidateOptionsResult.Success;
+    }
+
+    private sealed class MessagingOptionsValidator(IOptions<NotificationOptions> notifications, bool isDevelopment) : IValidateOptions<MessagingOptions>
+    {
+        public ValidateOptionsResult Validate(string? name, MessagingOptions options) =>
+            options.Validate(notifications.Value, isDevelopment).ToList() is { Count: > 0 } errors
+                ? ValidateOptionsResult.Fail(errors)
+                : ValidateOptionsResult.Success;
     }
 
     /// <summary>

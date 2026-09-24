@@ -83,7 +83,7 @@ builder.Services.AddRequestLocalization(options =>
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddOpenApi();
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks().AddOutboxHealthCheck();
 
 // Behind a reverse proxy (nginx / the Next.js server) the client IP arrives in X-Forwarded-For. The host the browser
 // used arrives in X-Forwarded-Host (Next.js sets it on /api rewrites), which makes Google's redirect_uri point at the
