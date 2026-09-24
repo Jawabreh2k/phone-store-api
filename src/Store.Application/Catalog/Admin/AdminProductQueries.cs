@@ -13,6 +13,8 @@ public sealed record GetAdminProductsQuery(
     Guid? BrandId = null,
     bool? Published = null,
     bool LowStockOnly = false,
+    bool NoPhotosOnly = false,
+    bool OutOfStockOnly = false,
     int? Page = null,
     int? PageSize = null) : IQuery<PagedResult<AdminProductListItemDto>>;
 
@@ -51,6 +53,16 @@ internal sealed class GetAdminProductsHandler(IAppDbContext db)
         if (q.LowStockOnly)
         {
             products = products.Where(p => p.Variants.Any(v => v.IsActive && v.StockQuantity <= LowStockThreshold));
+        }
+
+        if (q.NoPhotosOnly)
+        {
+            products = products.Where(p => p.IsPublished && !p.Images.Any());
+        }
+
+        if (q.OutOfStockOnly)
+        {
+            products = products.Where(p => p.IsPublished && !p.Variants.Any(v => v.IsActive && v.StockQuantity > 0));
         }
 
         return await products

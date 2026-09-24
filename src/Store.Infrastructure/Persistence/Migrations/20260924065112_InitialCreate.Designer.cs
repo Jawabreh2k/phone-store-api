@@ -13,7 +13,7 @@ using Store.Infrastructure.Persistence;
 namespace Store.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260923072435_InitialCreate")]
+    [Migration("20260924065112_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -895,6 +895,12 @@ namespace Store.Infrastructure.Persistence.Migrations
                         .HasMaxLength(16)
                         .IsUnicode(false)
                         .HasColumnType("varchar(16)");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
 
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("datetimeoffset");

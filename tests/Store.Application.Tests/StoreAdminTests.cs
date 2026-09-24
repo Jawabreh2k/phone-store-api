@@ -63,7 +63,7 @@ public sealed class StoreAdminTests : IAsyncLifetime
     {
         var update = new UpdateSettingsCommand(
             new LocalizedTextDto("Jawwal Store", "متجر جوال"), "079 123 4567", "00962791234567", " help@store.jo ",
-            "jod", "962", 2.5m, 75m, AllowGuestCheckout: true);
+            "jod", "962", "Asia/Amman", 2.5m, 75m, AllowGuestCheckout: true);
 
         (await _host.Send(update)).IsSuccess.ShouldBeTrue();
         var saved = (await _host.Query<GetAdminSettingsQuery, AdminSettingsDto>(new GetAdminSettingsQuery())).Value;
@@ -90,7 +90,7 @@ public sealed class StoreAdminTests : IAsyncLifetime
         (await _host.Db(db => db.StoreSettings.Select(s => s.LogoUrl).SingleAsync())).ShouldBe(two.Value);
 
         // Saving the rest of the settings leaves the logo alone.
-        (await _host.Send(new UpdateSettingsCommand(new LocalizedTextDto("A", "ب"), null, null, null, "JOD", "962", 0m, null, true))).IsSuccess.ShouldBeTrue();
+        (await _host.Send(new UpdateSettingsCommand(new LocalizedTextDto("A", "ب"), null, null, null, "JOD", "962", "Asia/Amman", 0m, null, true))).IsSuccess.ShouldBeTrue();
         (await _host.Db(db => db.StoreSettings.Select(s => s.LogoUrl).SingleAsync())).ShouldBe(two.Value);
 
         (await _host.Send(new RemoveStoreLogoCommand())).IsSuccess.ShouldBeTrue();

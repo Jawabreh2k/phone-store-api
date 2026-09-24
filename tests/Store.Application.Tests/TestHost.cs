@@ -20,19 +20,21 @@ public sealed class TestHost : IAsyncDisposable
     private readonly ServiceProvider _provider;
     private int _orderNumber = 100_000;
 
-    private TestHost(SqliteConnection connection, ServiceProvider provider)
+    private TestHost(SqliteConnection connection, ServiceProvider provider, DateTimeOffset clockStart)
     {
         _connection = connection;
         _provider = provider;
+        Clock = new FakeTimeProvider(clockStart);
     }
 
-    public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 9, 23, 9, 0, 0, TimeSpan.Zero));
+    public FakeTimeProvider Clock { get; }
     public FakeCurrentUser User { get; } = new();
     public FakeLanguage Language { get; } = new();
     public FakeFileStorage Files { get; } = new();
 
-    public static async Task<TestHost> CreateAsync(bool withSampleCatalog = true)
+    public static async Task<TestHost> CreateAsync(bool withSampleCatalog = true, DateTimeOffset? clockStart = null)
     {
+        var start = clockStart ?? new DateTimeOffset(2026, 9, 23, 9, 0, 0, TimeSpan.Zero);
         var connection = new SqliteConnection("DataSource=:memory:");
         await connection.OpenAsync();
 
@@ -52,7 +54,7 @@ public sealed class TestHost : IAsyncDisposable
         services.AddSingleton<IFileStorage>(_ => host!.Files);
         services.AddSingleton<IIdentityService, UnusedIdentityService>(); // Identity is covered by ASP.NET Core; not under test here
 
-        host = new TestHost(connection, services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true }));
+        host = new TestHost(connection, services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true }), start);
 
         await using var scope = host._provider.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();

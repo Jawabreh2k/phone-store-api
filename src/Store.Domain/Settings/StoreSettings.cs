@@ -20,6 +20,7 @@ public sealed class StoreSettings : AuditableEntity
         StoreName = storeName;
         CurrencyCode = currencyCode;
         AllowGuestCheckout = true;
+        TimeZoneId = "Asia/Amman";
         UpdateRegion(phoneCountryCode);
     }
 
@@ -56,6 +57,9 @@ public sealed class StoreSettings : AuditableEntity
 
     public bool AllowGuestCheckout { get; private set; }
 
+    /// <summary>IANA time zone id (e.g. "Asia/Amman") used for "today" in the admin dashboard.</summary>
+    public string TimeZoneId { get; private set; } = null!;
+
     public decimal ShippingFeeFor(decimal subtotal) =>
         FreeShippingThreshold is { } threshold && subtotal >= threshold ? 0m : FlatShippingFee;
 
@@ -85,5 +89,17 @@ public sealed class StoreSettings : AuditableEntity
         FlatShippingFee = flatShippingFee;
         FreeShippingThreshold = freeShippingThreshold;
         AllowGuestCheckout = allowGuestCheckout;
+    }
+
+    public void UpdateTimeZone(string timeZoneId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(timeZoneId);
+        var id = timeZoneId.Trim();
+        if (!TimeZoneInfo.TryFindSystemTimeZoneById(id, out _))
+        {
+            throw new ArgumentException($"Unknown time zone id: {id}.", nameof(timeZoneId));
+        }
+
+        TimeZoneId = id;
     }
 }

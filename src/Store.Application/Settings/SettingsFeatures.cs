@@ -39,6 +39,7 @@ public sealed record AdminSettingsDto(
     string? SupportEmail,
     string CurrencyCode,
     string PhoneCountryCode,
+    string TimeZoneId,
     decimal FlatShippingFee,
     decimal? FreeShippingThreshold,
     bool AllowGuestCheckout);
@@ -52,7 +53,7 @@ internal sealed class GetAdminSettingsHandler(IAppDbContext db) : IQueryHandler<
         var s = await db.StoreSettings.AsNoTracking().FirstAsync(cancellationToken);
         return new AdminSettingsDto(
             LocalizedTextDto.From(s.StoreName), s.LogoUrl, s.SupportPhone, s.WhatsAppNumber, s.SupportEmail,
-            s.CurrencyCode, s.PhoneCountryCode, s.FlatShippingFee, s.FreeShippingThreshold, s.AllowGuestCheckout);
+            s.CurrencyCode, s.PhoneCountryCode, s.TimeZoneId, s.FlatShippingFee, s.FreeShippingThreshold, s.AllowGuestCheckout);
     }
 }
 
@@ -67,6 +68,7 @@ public sealed record UpdateSettingsCommand(
     string? SupportEmail,
     string CurrencyCode,
     string PhoneCountryCode,
+    string TimeZoneId,
     decimal FlatShippingFee,
     decimal? FreeShippingThreshold,
     bool AllowGuestCheckout) : ICommand;
@@ -84,6 +86,10 @@ public sealed class UpdateSettingsValidator : AbstractValidator<UpdateSettingsCo
         RuleFor(x => x.SupportPhone).Phone().When(x => !string.IsNullOrEmpty(x.SupportPhone));
         RuleFor(x => x.WhatsAppNumber).Phone().When(x => !string.IsNullOrEmpty(x.WhatsAppNumber));
         RuleFor(x => x.SupportEmail).EmailAddress().MaximumLength(254).When(x => !string.IsNullOrEmpty(x.SupportEmail));
+        // Stop at the first failure: the lookup below throws on a null id.
+        RuleFor(x => x.TimeZoneId).Cascade(CascadeMode.Stop).NotEmpty().MaximumLength(64)
+            .Must(id => TimeZoneInfo.TryFindSystemTimeZoneById(id, out _))
+            .WithMessage("Choose a valid time zone.");
     }
 }
 
@@ -110,6 +116,7 @@ internal sealed class UpdateSettingsHandler(IAppDbContext db) : ICommandHandler<
         settings.Rename(command.StoreName.ToDomain());
         settings.UpdateContact(supportPhone.Value, whatsApp.Value, command.SupportEmail);
         settings.UpdateCommerce(command.CurrencyCode, command.FlatShippingFee, command.FreeShippingThreshold, command.AllowGuestCheckout);
+        settings.UpdateTimeZone(command.TimeZoneId);
         await db.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }

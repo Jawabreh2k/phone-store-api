@@ -42,6 +42,7 @@ public sealed record UpdateSettingsRequest(
     string? SupportEmail,
     string CurrencyCode,
     string PhoneCountryCode,
+    string TimeZoneId,
     decimal FlatShippingFee,
     decimal? FreeShippingThreshold,
     bool AllowGuestCheckout);

@@ -25,7 +25,7 @@ public sealed class AdminSettingsController : ApiControllerBase
         [FromServices] ICommandHandler<UpdateSettingsCommand> handler,
         CancellationToken ct) =>
         FromResult(await handler.Handle(
-            new UpdateSettingsCommand(s.StoreName, s.SupportPhone, s.WhatsAppNumber, s.SupportEmail, s.CurrencyCode, s.PhoneCountryCode, s.FlatShippingFee, s.FreeShippingThreshold, s.AllowGuestCheckout),
+            new UpdateSettingsCommand(s.StoreName, s.SupportPhone, s.WhatsAppNumber, s.SupportEmail, s.CurrencyCode, s.PhoneCountryCode, s.TimeZoneId, s.FlatShippingFee, s.FreeShippingThreshold, s.AllowGuestCheckout),
             ct));
 
     /// <summary>Multipart upload (field "file"); returns the logo's URL. Same antiforgery reasoning as product images.</summary>

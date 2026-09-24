@@ -112,6 +112,7 @@ internal sealed class StoreSettingsConfiguration : IEntityTypeConfiguration<Stor
         builder.Property(s => s.PhoneCountryCode).HasMaxLength(3).IsUnicode(false);
         builder.Property(s => s.SupportEmail).HasMaxLength(256);
         builder.Property(s => s.CurrencyCode).HasMaxLength(3).IsFixedLength().IsUnicode(false);
+        builder.Property(s => s.TimeZoneId).HasMaxLength(64).IsUnicode(false);
     }
 }
 

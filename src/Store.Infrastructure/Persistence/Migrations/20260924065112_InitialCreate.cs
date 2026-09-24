@@ -108,6 +108,7 @@ namespace Store.Infrastructure.Persistence.Migrations
                     FlatShippingFee = table.Column<decimal>(type: "decimal(18,3)", precision: 18, scale: 3, nullable: false),
                     FreeShippingThreshold = table.Column<decimal>(type: "decimal(18,3)", precision: 18, scale: 3, nullable: true),
                     AllowGuestCheckout = table.Column<bool>(type: "bit", nullable: false),
+                    TimeZoneId = table.Column<string>(type: "varchar(64)", unicode: false, maxLength: 64, nullable: false),
                     StoreNameAr = table.Column<string>(type: "nvarchar(80)", maxLength: 80, nullable: false),
                     StoreNameEn = table.Column<string>(type: "nvarchar(80)", maxLength: 80, nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false),
