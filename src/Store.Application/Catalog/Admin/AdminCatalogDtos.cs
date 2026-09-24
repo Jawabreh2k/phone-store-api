@@ -6,9 +6,10 @@ namespace Store.Application.Catalog.Admin;
 
 // Admin DTOs carry both languages so the editor can show them side by side.
 
-public sealed record AdminBrandDto(Guid Id, string Name, string Slug, string? LogoUrl, int SortOrder, bool IsActive);
+/// <summary>ProductCount includes unpublished products: a brand or category with any product can't be deleted.</summary>
+public sealed record AdminBrandDto(Guid Id, string Name, string Slug, string? LogoUrl, int SortOrder, bool IsActive, int ProductCount);
 
-public sealed record AdminCategoryDto(Guid Id, LocalizedTextDto Name, string Slug, ProductType ProductType, int SortOrder, bool IsActive);
+public sealed record AdminCategoryDto(Guid Id, LocalizedTextDto Name, string Slug, ProductType ProductType, int SortOrder, bool IsActive, int ProductCount);
 
 public sealed record AdminProductListItemDto(
     Guid Id,
@@ -20,6 +21,7 @@ public sealed record AdminProductListItemDto(
     bool IsFeatured,
     int VariantCount,
     int TotalStock,
+    bool HasLowStock,
     decimal? MinPrice,
     string? ImageUrl,
     DateTimeOffset? UpdatedAt);

@@ -16,7 +16,7 @@ internal sealed class GetAdminBrandsHandler(IAppDbContext db) : IQueryHandler<Ge
     public async Task<Result<IReadOnlyList<AdminBrandDto>>> Handle(GetAdminBrandsQuery query, CancellationToken cancellationToken) =>
         await db.Brands.AsNoTracking()
             .OrderBy(b => b.SortOrder).ThenBy(b => b.Name)
-            .Select(b => new AdminBrandDto(b.Id, b.Name, b.Slug, b.LogoUrl, b.SortOrder, b.IsActive))
+            .Select(b => new AdminBrandDto(b.Id, b.Name, b.Slug, b.LogoUrl, b.SortOrder, b.IsActive, db.Products.Count(p => p.BrandId == b.Id)))
             .ToListAsync(cancellationToken);
 }
 
@@ -71,6 +71,61 @@ internal sealed class SaveBrandHandler(IAppDbContext db) : ICommandHandler<SaveB
     }
 }
 
+/// <summary>The store's brand filter order: the brands listed take positions 1, 2, 3… in that order.</summary>
+public sealed record ReorderBrandsCommand(IReadOnlyList<Guid> BrandIds) : ICommand;
+
+public sealed class ReorderBrandsValidator : AbstractValidator<ReorderBrandsCommand>
+{
+    public ReorderBrandsValidator() =>
+        RuleFor(x => x.BrandIds).NotEmpty().Must(ids => ids.Count <= 500 && ids.Distinct().Count() == ids.Count)
+            .WithMessage("List each brand once, at most 500.");
+}
+
+internal sealed class ReorderBrandsHandler(IAppDbContext db) : ICommandHandler<ReorderBrandsCommand>
+{
+    public async Task<Result> Handle(ReorderBrandsCommand command, CancellationToken cancellationToken)
+    {
+        var ids = command.BrandIds;
+        var brands = await db.Brands.Where(b => ids.Contains(b.Id)).ToDictionaryAsync(b => b.Id, cancellationToken);
+        if (brands.Count != ids.Count)
+        {
+            return CatalogErrors.BrandNotFound;
+        }
+
+        for (var i = 0; i < ids.Count; i++)
+        {
+            brands[ids[i]].MoveTo(i + 1);
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}
+
+/// <summary>Deletes a brand no product uses (e.g. one created by mistake). Brands in use are hidden instead.</summary>
+public sealed record DeleteBrandCommand(Guid BrandId) : ICommand;
+
+internal sealed class DeleteBrandHandler(IAppDbContext db) : ICommandHandler<DeleteBrandCommand>
+{
+    public async Task<Result> Handle(DeleteBrandCommand command, CancellationToken cancellationToken)
+    {
+        var brand = await db.Brands.FirstOrDefaultAsync(b => b.Id == command.BrandId, cancellationToken);
+        if (brand is null)
+        {
+            return CatalogErrors.BrandNotFound;
+        }
+
+        if (await db.Products.AnyAsync(p => p.BrandId == brand.Id, cancellationToken))
+        {
+            return CatalogErrors.BrandInUse;
+        }
+
+        db.Brands.Remove(brand);
+        await db.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}
+
 // ---------- Categories ----------
 
 public sealed record GetAdminCategoriesQuery : IQuery<IReadOnlyList<AdminCategoryDto>>;
@@ -80,7 +135,9 @@ internal sealed class GetAdminCategoriesHandler(IAppDbContext db) : IQueryHandle
     public async Task<Result<IReadOnlyList<AdminCategoryDto>>> Handle(GetAdminCategoriesQuery query, CancellationToken cancellationToken) =>
         await db.Categories.AsNoTracking()
             .OrderBy(c => c.ProductType).ThenBy(c => c.SortOrder)
-            .Select(c => new AdminCategoryDto(c.Id, new LocalizedTextDto(c.Name.En, c.Name.Ar), c.Slug, c.ProductType, c.SortOrder, c.IsActive))
+            .Select(c => new AdminCategoryDto(
+                c.Id, new LocalizedTextDto(c.Name.En, c.Name.Ar), c.Slug, c.ProductType, c.SortOrder, c.IsActive,
+                db.Products.Count(p => p.CategoryId == c.Id)))
             .ToListAsync(cancellationToken);
 }
 
@@ -141,5 +198,68 @@ internal sealed class SaveCategoryHandler(IAppDbContext db) : ICommandHandler<Sa
 
         await db.SaveChangesAsync(cancellationToken);
         return category.Id;
+    }
+}
+
+/// <summary>
+/// Display order within one product type: the categories listed take positions 1, 2, 3… in that order.
+/// Mixing phone and accessory categories is rejected, since each type is ordered on its own.
+/// </summary>
+public sealed record ReorderCategoriesCommand(IReadOnlyList<Guid> CategoryIds) : ICommand;
+
+public sealed class ReorderCategoriesValidator : AbstractValidator<ReorderCategoriesCommand>
+{
+    public ReorderCategoriesValidator() =>
+        RuleFor(x => x.CategoryIds).NotEmpty().Must(ids => ids.Count <= 500 && ids.Distinct().Count() == ids.Count)
+            .WithMessage("List each category once, at most 500.");
+}
+
+internal sealed class ReorderCategoriesHandler(IAppDbContext db) : ICommandHandler<ReorderCategoriesCommand>
+{
+    public async Task<Result> Handle(ReorderCategoriesCommand command, CancellationToken cancellationToken)
+    {
+        var ids = command.CategoryIds;
+        var categories = await db.Categories.Where(c => ids.Contains(c.Id)).ToDictionaryAsync(c => c.Id, cancellationToken);
+        if (categories.Count != ids.Count)
+        {
+            return CatalogErrors.CategoryNotFound;
+        }
+
+        if (categories.Values.Select(c => c.ProductType).Distinct().Count() > 1)
+        {
+            return CatalogErrors.CategoryTypeMismatch;
+        }
+
+        for (var i = 0; i < ids.Count; i++)
+        {
+            categories[ids[i]].MoveTo(i + 1);
+        }
+
+        await db.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}
+
+/// <summary>Deletes a category no product uses. Categories in use are hidden instead.</summary>
+public sealed record DeleteCategoryCommand(Guid CategoryId) : ICommand;
+
+internal sealed class DeleteCategoryHandler(IAppDbContext db) : ICommandHandler<DeleteCategoryCommand>
+{
+    public async Task<Result> Handle(DeleteCategoryCommand command, CancellationToken cancellationToken)
+    {
+        var category = await db.Categories.FirstOrDefaultAsync(c => c.Id == command.CategoryId, cancellationToken);
+        if (category is null)
+        {
+            return CatalogErrors.CategoryNotFound;
+        }
+
+        if (await db.Products.AnyAsync(p => p.CategoryId == category.Id, cancellationToken))
+        {
+            return CatalogErrors.CategoryInUse;
+        }
+
+        db.Categories.Remove(category);
+        await db.SaveChangesAsync(cancellationToken);
+        return Result.Success();
     }
 }

@@ -65,6 +65,7 @@ internal sealed class GetAdminProductsHandler(IAppDbContext db)
                 p.IsFeatured,
                 p.Variants.Count,
                 p.Variants.Sum(v => v.StockQuantity),
+                p.Variants.Any(v => v.IsActive && v.StockQuantity <= LowStockThreshold),
                 p.Variants.Where(v => v.IsActive).Min(v => (decimal?)v.Price),
                 p.Images.OrderBy(i => i.SortOrder).Select(i => i.Url).FirstOrDefault(),
                 p.UpdatedAt ?? p.CreatedAt))

@@ -56,54 +56,112 @@ internal sealed class GetAdminSettingsHandler(IAppDbContext db) : IQueryHandler<
     }
 }
 
-public sealed record UpdateSettingsCommand(AdminSettingsDto Settings) : ICommand;
+/// <summary>
+/// Everything on the settings page except the logo, which has its own upload / remove commands, so saving the
+/// form can never put back a logo that was replaced a moment earlier.
+/// </summary>
+public sealed record UpdateSettingsCommand(
+    LocalizedTextDto StoreName,
+    string? SupportPhone,
+    string? WhatsAppNumber,
+    string? SupportEmail,
+    string CurrencyCode,
+    string PhoneCountryCode,
+    decimal FlatShippingFee,
+    decimal? FreeShippingThreshold,
+    bool AllowGuestCheckout) : ICommand;
 
-public sealed class AdminSettingsValidator : AbstractValidator<AdminSettingsDto>
+public sealed class UpdateSettingsValidator : AbstractValidator<UpdateSettingsCommand>
 {
-    public AdminSettingsValidator()
+    public UpdateSettingsValidator()
     {
         RuleFor(x => x.StoreName).NotNull().SetValidator(new LocalizedTextValidator(80));
         RuleFor(x => x.CurrencyCode).NotEmpty().Matches("^[A-Za-z]{3}$");
         RuleFor(x => x.PhoneCountryCode).NotEmpty().Matches("^[1-9][0-9]{0,2}$").WithMessage("Enter the country calling code without + (e.g. 962).");
-        RuleFor(x => x.FlatShippingFee).GreaterThanOrEqualTo(0);
-        RuleFor(x => x.FreeShippingThreshold).GreaterThanOrEqualTo(0).When(x => x.FreeShippingThreshold is not null);
+        RuleFor(x => x.FlatShippingFee).GreaterThanOrEqualTo(0).PrecisionScale(18, 3, ignoreTrailingZeros: true);
+        RuleFor(x => x.FreeShippingThreshold).GreaterThanOrEqualTo(0).PrecisionScale(18, 3, ignoreTrailingZeros: true)
+            .When(x => x.FreeShippingThreshold is not null);
         RuleFor(x => x.SupportPhone).Phone().When(x => !string.IsNullOrEmpty(x.SupportPhone));
         RuleFor(x => x.WhatsAppNumber).Phone().When(x => !string.IsNullOrEmpty(x.WhatsAppNumber));
-        RuleFor(x => x.SupportEmail).EmailAddress().When(x => !string.IsNullOrEmpty(x.SupportEmail));
-        RuleFor(x => x.LogoUrl).MaximumLength(500);
+        RuleFor(x => x.SupportEmail).EmailAddress().MaximumLength(254).When(x => !string.IsNullOrEmpty(x.SupportEmail));
     }
-}
-
-public sealed class UpdateSettingsValidator : AbstractValidator<UpdateSettingsCommand>
-{
-    public UpdateSettingsValidator() => RuleFor(x => x.Settings).NotNull().SetValidator(new AdminSettingsValidator());
 }
 
 internal sealed class UpdateSettingsHandler(IAppDbContext db) : ICommandHandler<UpdateSettingsCommand>
 {
     public async Task<Result> Handle(UpdateSettingsCommand command, CancellationToken cancellationToken)
     {
-        var dto = command.Settings;
         var settings = await db.StoreSettings.FirstAsync(cancellationToken);
 
         // Region first: the store's own numbers are normalized with the (possibly new) country code.
-        settings.UpdateRegion(dto.PhoneCountryCode);
-        var supportPhone = PhoneInput.NormalizeOptional(settings, dto.SupportPhone, "settings.supportPhone");
+        settings.UpdateRegion(command.PhoneCountryCode);
+        var supportPhone = PhoneInput.NormalizeOptional(settings, command.SupportPhone, "supportPhone");
         if (supportPhone.IsFailure)
         {
             return supportPhone.Error;
         }
 
-        var whatsApp = PhoneInput.NormalizeOptional(settings, dto.WhatsAppNumber, "settings.whatsAppNumber");
+        var whatsApp = PhoneInput.NormalizeOptional(settings, command.WhatsAppNumber, "whatsAppNumber");
         if (whatsApp.IsFailure)
         {
             return whatsApp.Error;
         }
 
-        settings.UpdateBranding(dto.StoreName.ToDomain(), dto.LogoUrl);
-        settings.UpdateContact(supportPhone.Value, whatsApp.Value, dto.SupportEmail);
-        settings.UpdateCommerce(dto.CurrencyCode, dto.FlatShippingFee, dto.FreeShippingThreshold, dto.AllowGuestCheckout);
+        settings.Rename(command.StoreName.ToDomain());
+        settings.UpdateContact(supportPhone.Value, whatsApp.Value, command.SupportEmail);
+        settings.UpdateCommerce(command.CurrencyCode, command.FlatShippingFee, command.FreeShippingThreshold, command.AllowGuestCheckout);
         await db.SaveChangesAsync(cancellationToken);
+        return Result.Success();
+    }
+}
+
+// ---------- Logo ----------
+
+/// <summary>Stores an uploaded logo (JPEG, PNG or WebP) and makes it the store's; the previous file is deleted.</summary>
+public sealed record UploadStoreLogoCommand(Stream Content, long Length) : ICommand<string>;
+
+internal sealed class UploadStoreLogoHandler(IAppDbContext db, IFileStorage storage) : ICommandHandler<UploadStoreLogoCommand, string>
+{
+    public async Task<Result<string>> Handle(UploadStoreLogoCommand command, CancellationToken cancellationToken)
+    {
+        var extension = ImageFile.Validate(command.Content, command.Length, out var error);
+        if (extension is null)
+        {
+            return error!;
+        }
+
+        var settings = await db.StoreSettings.FirstAsync(cancellationToken);
+        var previous = settings.LogoUrl;
+        var url = await storage.SaveAsync(command.Content, extension, "store", cancellationToken);
+        settings.SetLogo(url);
+        await db.SaveChangesAsync(cancellationToken);
+
+        // Only once nothing points at it any more.
+        if (previous is not null)
+        {
+            await storage.DeleteAsync(previous, cancellationToken);
+        }
+
+        return url;
+    }
+}
+
+/// <summary>Goes back to the store name as text in the header.</summary>
+public sealed record RemoveStoreLogoCommand : ICommand;
+
+internal sealed class RemoveStoreLogoHandler(IAppDbContext db, IFileStorage storage) : ICommandHandler<RemoveStoreLogoCommand>
+{
+    public async Task<Result> Handle(RemoveStoreLogoCommand command, CancellationToken cancellationToken)
+    {
+        var settings = await db.StoreSettings.FirstAsync(cancellationToken);
+        if (settings.LogoUrl is not { } previous)
+        {
+            return Result.Success();
+        }
+
+        settings.SetLogo(null);
+        await db.SaveChangesAsync(cancellationToken);
+        await storage.DeleteAsync(previous, cancellationToken);
         return Result.Success();
     }
 }

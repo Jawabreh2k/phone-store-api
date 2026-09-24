@@ -41,4 +41,7 @@ public sealed class Category : AuditableEntity
         SortOrder = sortOrder;
         IsActive = isActive;
     }
+
+    /// <summary>Position among the categories of the same product type (ascending).</summary>
+    public void MoveTo(int sortOrder) => SortOrder = sortOrder;
 }

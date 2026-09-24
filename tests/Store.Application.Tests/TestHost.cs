@@ -29,6 +29,7 @@ public sealed class TestHost : IAsyncDisposable
     public FakeTimeProvider Clock { get; } = new(new DateTimeOffset(2026, 9, 23, 9, 0, 0, TimeSpan.Zero));
     public FakeCurrentUser User { get; } = new();
     public FakeLanguage Language { get; } = new();
+    public FakeFileStorage Files { get; } = new();
 
     public static async Task<TestHost> CreateAsync(bool withSampleCatalog = true)
     {
@@ -48,7 +49,7 @@ public sealed class TestHost : IAsyncDisposable
         services.AddSingleton<ICurrentUser>(_ => host!.User);
         services.AddSingleton<ILanguageProvider>(_ => host!.Language);
         services.AddSingleton<IOrderNumberGenerator>(_ => new SequentialOrderNumbers(host!));
-        services.AddSingleton<IFileStorage, FakeFileStorage>();
+        services.AddSingleton<IFileStorage>(_ => host!.Files);
         services.AddSingleton<IIdentityService, UnusedIdentityService>(); // Identity is covered by ASP.NET Core; not under test here
 
         host = new TestHost(connection, services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true }));

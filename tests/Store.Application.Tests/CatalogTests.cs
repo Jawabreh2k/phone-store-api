@@ -122,6 +122,20 @@ public sealed class CatalogTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AdminList_FlagsLowStock_ByOption_MatchingTheLowStockFilter()
+    {
+        var all = await _host.Query<GetAdminProductsQuery, PagedResult<AdminProductListItemDto>>(new GetAdminProductsQuery(PageSize: 50));
+        var low = await _host.Query<GetAdminProductsQuery, PagedResult<AdminProductListItemDto>>(new GetAdminProductsQuery(LowStockOnly: true, PageSize: 50));
+
+        // The badge and the filter apply one rule, so the list never shows a badge the filter disagrees with.
+        all.Value.Items.Where(p => p.HasLowStock).Select(p => p.Id).ShouldBe(low.Value.Items.Select(p => p.Id), ignoreOrder: true);
+
+        var iphone = all.Value.Items.Single(p => p.Slug == "iphone-16-pro");
+        iphone.HasLowStock.ShouldBeTrue(); // 256 GB Black has 3 left…
+        iphone.TotalStock.ShouldBeGreaterThan(5); // …though the product as a whole has plenty
+    }
+
+    [Fact]
     public async Task ImageUpload_RejectsNonImages_AndStoresValidOnes()
     {
         var id = await _host.Db(db => db.Products.Where(p => p.Slug == "redmi-note-13").Select(p => p.Id).SingleAsync());

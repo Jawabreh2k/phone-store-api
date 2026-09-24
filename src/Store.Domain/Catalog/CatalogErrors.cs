@@ -8,6 +8,8 @@ public static class CatalogErrors
     public static readonly Error VariantNotFound = Error.NotFound("catalog.variant_not_found", "The product variant was not found.");
     public static readonly Error BrandNotFound = Error.NotFound("catalog.brand_not_found", "The brand was not found.");
     public static readonly Error CategoryNotFound = Error.NotFound("catalog.category_not_found", "The category was not found.");
+    public static readonly Error BrandInUse = Error.Conflict("catalog.brand_in_use", "Products still use this brand. Hide it instead, or move its products to another brand first.");
+    public static readonly Error CategoryInUse = Error.Conflict("catalog.category_in_use", "Products still use this category. Hide it instead, or move its products to another category first.");
     public static readonly Error SlugTaken = Error.Conflict("catalog.slug_taken", "Another item already uses this slug.");
     public static readonly Error SkuTaken = Error.Conflict("catalog.sku_taken", "Another variant already uses this SKU.");
     public static readonly Error CategoryTypeMismatch = Error.Validation("catalog.category_type_mismatch", "The category belongs to a different product type.");

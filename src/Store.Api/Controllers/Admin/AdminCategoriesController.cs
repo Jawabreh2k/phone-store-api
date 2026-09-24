@@ -33,4 +33,17 @@ public sealed class AdminCategoriesController : ApiControllerBase
         [FromServices] ICommandHandler<SaveCategoryCommand, Guid> handler,
         CancellationToken ct) =>
         FromResult(await handler.Handle(new SaveCategoryCommand(id, c.Name, c.Slug, c.ProductType, c.SortOrder, c.IsActive), ct));
+
+    /// <summary>Body: the category ids of one product type, in the new display order.</summary>
+    [HttpPut("order")]
+    public async Task<IActionResult> Reorder(
+        IReadOnlyList<Guid> categoryIds,
+        [FromServices] ICommandHandler<ReorderCategoriesCommand> handler,
+        CancellationToken ct) =>
+        FromResult(await handler.Handle(new ReorderCategoriesCommand(categoryIds), ct));
+
+    /// <summary>Only for categories no product uses; others are hidden instead (409 catalog.category_in_use).</summary>
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, [FromServices] ICommandHandler<DeleteCategoryCommand> handler, CancellationToken ct) =>
+        FromResult(await handler.Handle(new DeleteCategoryCommand(id), ct));
 }

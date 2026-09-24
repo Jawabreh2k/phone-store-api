@@ -41,4 +41,7 @@ public sealed class Brand : AuditableEntity
         SortOrder = sortOrder;
         IsActive = isActive;
     }
+
+    /// <summary>Position in the store's brand filters (ascending).</summary>
+    public void MoveTo(int sortOrder) => SortOrder = sortOrder;
 }

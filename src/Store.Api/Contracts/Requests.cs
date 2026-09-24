@@ -35,6 +35,17 @@ public sealed record SaveBrandRequest(string Name, string? Slug, string? LogoUrl
 
 public sealed record SaveCategoryRequest(LocalizedTextDto Name, string? Slug, ProductType ProductType, int SortOrder, bool IsActive);
 
+public sealed record UpdateSettingsRequest(
+    LocalizedTextDto StoreName,
+    string? SupportPhone,
+    string? WhatsAppNumber,
+    string? SupportEmail,
+    string CurrencyCode,
+    string PhoneCountryCode,
+    decimal FlatShippingFee,
+    decimal? FreeShippingThreshold,
+    bool AllowGuestCheckout);
+
 public sealed record SaveProductRequest(ProductType Type, Guid BrandId, Guid CategoryId, LocalizedTextDto Name, string? Slug, LocalizedTextDto Description, bool IsFeatured);
 
 public sealed record AddVariantRequest(VariantInput Variant, int StockQuantity);

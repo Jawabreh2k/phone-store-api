@@ -33,4 +33,17 @@ public sealed class AdminBrandsController : ApiControllerBase
         [FromServices] ICommandHandler<SaveBrandCommand, Guid> handler,
         CancellationToken ct) =>
         FromResult(await handler.Handle(new SaveBrandCommand(id, b.Name, b.Slug, b.LogoUrl, b.SortOrder, b.IsActive), ct));
+
+    /// <summary>Body: every brand id in the new display order.</summary>
+    [HttpPut("order")]
+    public async Task<IActionResult> Reorder(
+        IReadOnlyList<Guid> brandIds,
+        [FromServices] ICommandHandler<ReorderBrandsCommand> handler,
+        CancellationToken ct) =>
+        FromResult(await handler.Handle(new ReorderBrandsCommand(brandIds), ct));
+
+    /// <summary>Only for brands no product uses; others are hidden instead (409 catalog.brand_in_use).</summary>
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, [FromServices] ICommandHandler<DeleteBrandCommand> handler, CancellationToken ct) =>
+        FromResult(await handler.Handle(new DeleteBrandCommand(id), ct));
 }

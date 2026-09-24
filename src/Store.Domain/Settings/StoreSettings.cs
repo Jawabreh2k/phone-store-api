@@ -59,11 +59,11 @@ public sealed class StoreSettings : AuditableEntity
     public decimal ShippingFeeFor(decimal subtotal) =>
         FreeShippingThreshold is { } threshold && subtotal >= threshold ? 0m : FlatShippingFee;
 
-    public void UpdateBranding(LocalizedText storeName, string? logoUrl)
-    {
+    public void Rename(LocalizedText storeName) =>
         StoreName = storeName ?? throw new ArgumentNullException(nameof(storeName));
-        LogoUrl = logoUrl;
-    }
+
+    /// <summary>Sets (or with null, removes) the uploaded logo shown in the header instead of the store name.</summary>
+    public void SetLogo(string? logoUrl) => LogoUrl = logoUrl;
 
     public void UpdateContact(PhoneNumber? supportPhone, PhoneNumber? whatsAppNumber, string? supportEmail)
     {
