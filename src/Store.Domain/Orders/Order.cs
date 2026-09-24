@@ -8,6 +8,7 @@ namespace Store.Domain.Orders;
 ///
 /// Status flow:  Pending → Confirmed → Shipped → Delivered
 ///               Pending / Confirmed → Cancelled
+///               Delivered → Returned
 /// </summary>
 public sealed class Order : AuditableEntity
 {
@@ -18,8 +19,9 @@ public sealed class Order : AuditableEntity
         [OrderStatus.Pending] = [OrderStatus.Confirmed, OrderStatus.Cancelled],
         [OrderStatus.Confirmed] = [OrderStatus.Shipped, OrderStatus.Cancelled],
         [OrderStatus.Shipped] = [OrderStatus.Delivered],
-        [OrderStatus.Delivered] = [],
+        [OrderStatus.Delivered] = [OrderStatus.Returned],
         [OrderStatus.Cancelled] = [],
+        [OrderStatus.Returned] = [],
     };
 
     private readonly List<OrderItem> _items = [];
@@ -130,6 +132,20 @@ public sealed class Order : AuditableEntity
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Marks a delivered order as returned. Cash was already collected, so payment stays paid.
+    /// The caller must release the stock back to the shelf.
+    /// </summary>
+    public Result Return(Guid byUserId, DateTimeOffset now, string? note = null)
+    {
+        if (Status != OrderStatus.Delivered)
+        {
+            return OrderErrors.CannotReturn;
+        }
+
+        return TransitionTo(OrderStatus.Returned, byUserId, now, note);
     }
 
     /// <summary>

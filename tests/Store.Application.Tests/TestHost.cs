@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,6 +6,8 @@ using Microsoft.Extensions.Time.Testing;
 using Store.Application.Abstractions;
 using Store.Domain.Common;
 using Store.Domain.Settings;
+using Store.Infrastructure;
+using Store.Infrastructure.Notifications;
 using Store.Infrastructure.Persistence;
 using Store.Infrastructure.Persistence.Seeding;
 
@@ -16,6 +19,9 @@ namespace Store.Application.Tests;
 /// </summary>
 public sealed class TestHost : IAsyncDisposable
 {
+    /// <summary>Storefront address that password reset emails link to.</summary>
+    public const string StorefrontUrl = "https://shop.test";
+
     private readonly SqliteConnection _connection;
     private readonly ServiceProvider _provider;
     private int _orderNumber = 100_000;
@@ -31,8 +37,11 @@ public sealed class TestHost : IAsyncDisposable
     public FakeCurrentUser User { get; } = new();
     public FakeLanguage Language { get; } = new();
     public FakeFileStorage Files { get; } = new();
+    public FakeStaffOrderAlerter StaffAlerts { get; } = new();
+    public FakeEmailSender Emails { get; } = new();
 
-    public static async Task<TestHost> CreateAsync(bool withSampleCatalog = true, DateTimeOffset? clockStart = null)
+    /// <summary>A fresh host and database. <paramref name="configure"/> has the last word on the services, e.g. to change an option for one test.</summary>
+    public static async Task<TestHost> CreateAsync(bool withSampleCatalog = true, DateTimeOffset? clockStart = null, Action<IServiceCollection>? configure = null)
     {
         var start = clockStart ?? new DateTimeOffset(2026, 9, 23, 9, 0, 0, TimeSpan.Zero);
         var connection = new SqliteConnection("DataSource=:memory:");
@@ -52,7 +61,18 @@ public sealed class TestHost : IAsyncDisposable
         services.AddSingleton<ILanguageProvider>(_ => host!.Language);
         services.AddSingleton<IOrderNumberGenerator>(_ => new SequentialOrderNumbers(host!));
         services.AddSingleton<IFileStorage>(_ => host!.Files);
-        services.AddSingleton<IIdentityService, UnusedIdentityService>(); // Identity is covered by ASP.NET Core; not under test here
+        services.AddSingleton<IStaffOrderAlerter>(_ => host!.StaffAlerts);
+        services.AddSingleton<IEmailSender>(_ => host!.Emails);
+        services.AddSingleton<IDeferredWork, InlineDeferredWork>();
+
+        // Real ASP.NET Identity over the same database, so password reset runs end to end. Signing in needs an HTTP
+        // request and stays untested here; AddAuthentication only supplies what SignInManager is built from.
+        services.AddDataProtection().UseEphemeralDataProtectionProvider();
+        services.AddAuthentication();
+        services.AddIdentityStore();
+        services.AddScoped<IPasswordResetMailer, PasswordResetMailer>();
+        services.Configure<StorefrontOptions>(o => o.BaseUrl = StorefrontUrl);
+        configure?.Invoke(services);
 
         host = new TestHost(connection, services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true }), start);
 
@@ -123,14 +143,50 @@ public sealed class FakeLanguage : ILanguageProvider
     public Language Current { get; set; } = Language.En;
 }
 
-public sealed class UnusedIdentityService : IIdentityService
+/// <summary>Runs deferred mail and alerts before the handler returns, and never lets them fail the request.</summary>
+internal sealed class InlineDeferredWork(IServiceScopeFactory scopes) : IDeferredWork
 {
-    public Task<Result<UserProfile>> RegisterAsync(NewUser user, CancellationToken cancellationToken) => throw new NotSupportedException();
-    public Task<Result<UserProfile>> SignInAsync(string email, string password, bool rememberMe, CancellationToken cancellationToken) => throw new NotSupportedException();
-    public Task SignOutAsync() => throw new NotSupportedException();
-    public Task<UserProfile?> FindAsync(Guid userId, CancellationToken cancellationToken) => throw new NotSupportedException();
-    public Task<Result<UserProfile>> UpdateProfileAsync(Guid userId, string fullName, string? phoneNumber, Language preferredLanguage, CancellationToken cancellationToken) => throw new NotSupportedException();
-    public Task<Result> ChangePasswordAsync(Guid userId, string currentPassword, string newPassword, CancellationToken cancellationToken) => throw new NotSupportedException();
+    public void Run(Func<IServiceProvider, CancellationToken, Task> work)
+    {
+        try
+        {
+            using var scope = scopes.CreateScope();
+            work(scope.ServiceProvider, CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch (Exception)
+        {
+            // Same rule as production: a failed alert or email does not fail checkout or password reset.
+        }
+    }
+}
+
+public sealed class FakeStaffOrderAlerter : IStaffOrderAlerter
+{
+    public bool ThrowOnAlert { get; set; }
+    public List<Guid> AlertedOrderIds { get; } = [];
+
+    public Task AlertNewOrderAsync(Guid orderId, CancellationToken cancellationToken)
+    {
+        if (ThrowOnAlert)
+        {
+            throw new InvalidOperationException("Simulated alert failure.");
+        }
+
+        AlertedOrderIds.Add(orderId);
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Records mail instead of sending it.</summary>
+public sealed class FakeEmailSender : IEmailSender
+{
+    public List<EmailMessage> Sent { get; } = [];
+
+    public Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
+    {
+        Sent.Add(message);
+        return Task.CompletedTask;
+    }
 }
 
 public sealed class FakeFileStorage : IFileStorage

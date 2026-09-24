@@ -11,7 +11,7 @@ namespace Store.Application.Dashboard;
 public sealed record GetAdminDashboardQuery : IQuery<AdminDashboardDto>;
 
 /// <summary>
-/// Booked order value placed in the period, excluding cancelled orders.
+/// Booked order value placed in the period, excluding cancelled and returned orders.
 /// Cash on delivery: this is order totals, not cash collected.
 /// Amounts are never summed across currencies.
 /// </summary>
@@ -94,7 +94,7 @@ internal sealed class GetAdminDashboardHandler(IAppDbContext db, TimeProvider cl
 
         var salesWindowStart = topSellerRangeStart < chartRangeStart ? topSellerRangeStart : chartRangeStart;
         var salesOrders = await db.Orders.AsNoTracking()
-            .Where(o => o.PlacedAt >= salesWindowStart && o.Status != OrderStatus.Cancelled)
+            .Where(o => o.PlacedAt >= salesWindowStart && o.Status != OrderStatus.Cancelled && o.Status != OrderStatus.Returned)
             .Select(o => new OrderRow(o.PlacedAt, o.Total, o.CurrencyCode))
             .ToListAsync(cancellationToken);
 
@@ -133,7 +133,7 @@ internal sealed class GetAdminDashboardHandler(IAppDbContext db, TimeProvider cl
         // Only the item columns ranking needs, not whole orders with their contact and address. The two-argument
         // SelectMany becomes a plain JOIN (a nested Select would need APPLY, which SQLite can't run).
         var itemRows = await db.Orders.AsNoTracking()
-            .Where(o => o.PlacedAt >= topSellerRangeStart && o.Status != OrderStatus.Cancelled)
+            .Where(o => o.PlacedAt >= topSellerRangeStart && o.Status != OrderStatus.Cancelled && o.Status != OrderStatus.Returned)
             .SelectMany(o => o.Items, (o, i) => new ItemRow(
                 o.PlacedAt,
                 o.CurrencyCode,

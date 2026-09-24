@@ -174,3 +174,19 @@ internal static class CartStore
         return cart;
     }
 }
+
+/// <summary>Folds the guest cart into the account after a successful sign-in. One copy for every sign-in path.</summary>
+internal static class GuestCartMerge
+{
+    public static async Task AfterSignInAsync(
+        ICommandHandler<MergeGuestCartCommand> merge,
+        Result<UserProfile> signIn,
+        Guid? guestCartId,
+        CancellationToken cancellationToken)
+    {
+        if (signIn.IsSuccess && guestCartId is { } cartId)
+        {
+            await merge.Handle(new MergeGuestCartCommand(signIn.Value.Id, cartId), cancellationToken);
+        }
+    }
+}

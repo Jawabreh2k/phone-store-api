@@ -47,9 +47,10 @@ public class LayerTests
         var inherit = controllers.Should().Inherit(typeof(Store.Api.Common.ApiControllerBase)).And().BeSealed().GetResult();
         inherit.IsSuccessful.ShouldBeTrue(Failing(inherit));
 
+        // Sign-in (including the external-provider handshake) goes through IIdentityService, never Identity or the auth handlers directly.
         var dependencies = Types.InAssembly(typeof(Store.Api.Common.ApiControllerBase).Assembly)
             .That().ResideInNamespaceStartingWith("Store.Api.Controllers")
-            .ShouldNot().HaveDependencyOnAny("Store.Infrastructure", "Microsoft.EntityFrameworkCore")
+            .ShouldNot().HaveDependencyOnAny("Store.Infrastructure", "Microsoft.EntityFrameworkCore", "Microsoft.AspNetCore.Identity", "Microsoft.AspNetCore.Authentication")
             .GetResult();
         dependencies.IsSuccessful.ShouldBeTrue(Failing(dependencies));
     }

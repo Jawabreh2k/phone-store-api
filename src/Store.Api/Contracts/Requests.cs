@@ -26,6 +26,10 @@ public sealed record UpdateProfileRequest(string FullName, string? PhoneNumber, 
 
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 
+public sealed record ForgotPasswordRequest(string Email);
+
+public sealed record ResetPasswordRequest(string Email, string Token, string NewPassword);
+
 public sealed record SaveAddressRequest(string Label, string RecipientName, string Phone, AddressInput Address, bool IsDefault);
 
 public sealed record CancelOrderRequest(string? Reason);
@@ -45,7 +49,12 @@ public sealed record UpdateSettingsRequest(
     string TimeZoneId,
     decimal FlatShippingFee,
     decimal? FreeShippingThreshold,
-    bool AllowGuestCheckout);
+    bool AllowGuestCheckout,
+    string? SmtpHost,
+    int SmtpPort,
+    string? SmtpFrom,
+    string? SmtpUser,
+    string? SmtpPassword);
 
 public sealed record SaveProductRequest(ProductType Type, Guid BrandId, Guid CategoryId, LocalizedTextDto Name, string? Slug, LocalizedTextDto Description, bool IsFeatured);
 

@@ -34,6 +34,19 @@ public sealed class CheckoutFlowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Checkout_StaffAlertFailure_DoesNotRollBackOrder()
+    {
+        _host.StaffAlerts.ThrowOnAlert = true;
+        var cart = await _host.Send<AddToCartCommand, CartDto>(new(new CartOwner(null, null), await VariantId("RN13-128-BK"), 1));
+        var placed = await _host.Send<PlaceOrderCommand, OrderPlacedDto>(Checkout(new CartOwner(null, cart.Value.CartId)));
+
+        placed.IsSuccess.ShouldBeTrue(placed.IsFailure ? placed.Error.Description : null);
+        (await _host.Db(db => db.Orders.CountAsync())).ShouldBe(1);
+        var order = await _host.Db(db => db.Orders.SingleAsync());
+        order.Status.ShouldBe(OrderStatus.Pending);
+    }
+
+    [Fact]
     public async Task GuestCheckout_ReservesStock_SnapshotsPrices_AndEmptiesCart()
     {
         var phone = await VariantId("IP16P-256-TI");     // 999, stock 7
@@ -220,7 +233,7 @@ public sealed class CheckoutFlowTests : IAsyncLifetime
 
         var details = await _host.Query<GetAdminOrderQuery, AdminOrderDetailsDto>(new GetAdminOrderQuery(delivered));
         details.Value.Order.PaymentStatus.ShouldBe(PaymentStatus.Paid);
-        details.Value.NextStatuses.ShouldBeEmpty();
+        details.Value.NextStatuses.ShouldBe([OrderStatus.Returned]);
         details.Value.History[^1].ChangedBy.ShouldBe(admin);
 
         var cancelled = await PlaceAsync();
@@ -230,6 +243,53 @@ public sealed class CheckoutFlowTests : IAsyncLifetime
         (await Stock("GS24-128-BK")).ShouldBe(19);
 
         (await _host.Send(new ChangeOrderStatusCommand(cancelled, OrderStatus.Shipped, null))).Error.Code.ShouldBe("orders.invalid_transition");
+    }
+
+    [Fact]
+    public async Task Return_RestoresStock_ConfirmDoesNot()
+    {
+        var admin = await CreateCustomerAsync();
+        _host.User.UserId = admin;
+        const string sku = "GS24-128-BK";
+        var stockBefore = await Stock(sku);
+
+        var cart = await _host.Send<AddToCartCommand, CartDto>(new(new CartOwner(null, null), await VariantId(sku), 1));
+        var placed = await _host.Send<PlaceOrderCommand, OrderPlacedDto>(Checkout(new CartOwner(null, cart.Value.CartId)));
+        placed.IsSuccess.ShouldBeTrue();
+        (await Stock(sku)).ShouldBe(stockBefore - 1);
+
+        (await _host.Send(new ChangeOrderStatusCommand(placed.Value.OrderId, OrderStatus.Confirmed, null))).IsSuccess.ShouldBeTrue();
+        (await Stock(sku)).ShouldBe(stockBefore - 1);
+
+        (await _host.Send(new ChangeOrderStatusCommand(placed.Value.OrderId, OrderStatus.Shipped, null))).IsSuccess.ShouldBeTrue();
+        (await _host.Send(new ChangeOrderStatusCommand(placed.Value.OrderId, OrderStatus.Delivered, null))).IsSuccess.ShouldBeTrue();
+
+        var details = await _host.Query<GetAdminOrderQuery, AdminOrderDetailsDto>(new GetAdminOrderQuery(placed.Value.OrderId));
+        details.Value.Order.PaymentStatus.ShouldBe(PaymentStatus.Paid);
+        details.Value.NextStatuses.ShouldContain(OrderStatus.Returned);
+
+        (await _host.Send(new ChangeOrderStatusCommand(placed.Value.OrderId, OrderStatus.Returned, "Defective"))).IsSuccess.ShouldBeTrue();
+        (await Stock(sku)).ShouldBe(stockBefore);
+
+        var returned = await _host.Query<GetAdminOrderQuery, AdminOrderDetailsDto>(new GetAdminOrderQuery(placed.Value.OrderId));
+        returned.Value.Order.Status.ShouldBe(OrderStatus.Returned);
+        returned.Value.Order.PaymentStatus.ShouldBe(PaymentStatus.Paid);
+    }
+
+    [Fact]
+    public async Task PendingCancel_StillRestoresStock()
+    {
+        var admin = await CreateCustomerAsync();
+        _host.User.UserId = admin;
+        const string sku = "RN13-128-BK";
+        var stockBefore = await Stock(sku);
+
+        var cart = await _host.Send<AddToCartCommand, CartDto>(new(new CartOwner(null, null), await VariantId(sku), 1));
+        var placed = await _host.Send<PlaceOrderCommand, OrderPlacedDto>(Checkout(new CartOwner(null, cart.Value.CartId)));
+        (await Stock(sku)).ShouldBe(stockBefore - 1);
+
+        (await _host.Send(new ChangeOrderStatusCommand(placed.Value.OrderId, OrderStatus.Cancelled, "Unreachable"))).IsSuccess.ShouldBeTrue();
+        (await Stock(sku)).ShouldBe(stockBefore);
     }
 
     [Fact]

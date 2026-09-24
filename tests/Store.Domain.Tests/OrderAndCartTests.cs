@@ -109,6 +109,42 @@ public class OrderTests
 
         order.Cancel(Staff, byCustomer: false, null, Now).Error.ShouldBe(OrderErrors.CannotCancelAfterShipping);
     }
+
+    [Fact]
+    public void Return_OnlyFromDelivered_KeepsPaymentPaid()
+    {
+        var order = PlaceOrder();
+        order.Confirm(Staff, Now);
+        order.Ship(Staff, Now);
+        order.Deliver(Staff, Now);
+
+        order.Return(Staff, Now, "Customer refused").IsSuccess.ShouldBeTrue();
+        order.Status.ShouldBe(OrderStatus.Returned);
+        order.PaymentStatus.ShouldBe(PaymentStatus.Paid);
+        order.History[^1].Status.ShouldBe(OrderStatus.Returned);
+        order.History[^1].Note.ShouldBe("Customer refused");
+    }
+
+    [Fact]
+    public void Return_FromNonDelivered_Fails()
+    {
+        var order = PlaceOrder();
+        order.Confirm(Staff, Now);
+
+        order.Return(Staff, Now, null).Error.ShouldBe(OrderErrors.CannotReturn);
+        order.Status.ShouldBe(OrderStatus.Confirmed);
+    }
+
+    [Fact]
+    public void Customer_CannotReturnDeliveredOrder()
+    {
+        var order = PlaceOrder();
+        order.Confirm(Staff, Now);
+        order.Ship(Staff, Now);
+        order.Deliver(Staff, Now);
+
+        order.Cancel(Guid.NewGuid(), byCustomer: true, "changed mind", Now).Error.ShouldBe(OrderErrors.CustomerCanOnlyCancelPending);
+    }
 }
 
 public class CartTests

@@ -12,6 +12,12 @@ namespace Store.Api.Controllers.Admin;
 [Authorize(Policy = Policies.Admin)]
 public sealed class AdminOrdersController : ApiControllerBase
 {
+    [HttpGet("pending-count")]
+    public async Task<IActionResult> PendingCount(
+        [FromServices] IQueryHandler<GetPendingOrderCountQuery, int> handler,
+        CancellationToken ct) =>
+        FromResult(await handler.Handle(new GetPendingOrderCountQuery(), ct));
+
     /// <summary>Search matches order number, customer name, or phone in any format ("079 123…").</summary>
     [HttpGet]
     public async Task<IActionResult> Search(

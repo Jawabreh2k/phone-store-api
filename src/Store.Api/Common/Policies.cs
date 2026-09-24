@@ -5,8 +5,11 @@ internal static class Policies
 {
     public const string Admin = "admin";
 
-    /// <summary>Login, register, password change: 10/min per client IP.</summary>
+    /// <summary>Login, register, password change and reset: 10/min per client IP.</summary>
     public const string AuthRateLimit = "auth";
+
+    /// <summary>Google start, complete and connect: separate from password attempts, 30/min per client IP.</summary>
+    public const string ExternalAuthRateLimit = "external-auth";
 
     /// <summary>Placing orders: 20/min per client IP.</summary>
     public const string CheckoutRateLimit = "checkout";

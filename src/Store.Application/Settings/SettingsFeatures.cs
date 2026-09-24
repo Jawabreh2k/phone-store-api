@@ -42,7 +42,12 @@ public sealed record AdminSettingsDto(
     string TimeZoneId,
     decimal FlatShippingFee,
     decimal? FreeShippingThreshold,
-    bool AllowGuestCheckout);
+    bool AllowGuestCheckout,
+    string? SmtpHost,
+    int SmtpPort,
+    string? SmtpFrom,
+    string? SmtpUser,
+    bool HasSmtpPassword);
 
 public sealed record GetAdminSettingsQuery : IQuery<AdminSettingsDto>;
 
@@ -53,7 +58,8 @@ internal sealed class GetAdminSettingsHandler(IAppDbContext db) : IQueryHandler<
         var s = await db.StoreSettings.AsNoTracking().FirstAsync(cancellationToken);
         return new AdminSettingsDto(
             LocalizedTextDto.From(s.StoreName), s.LogoUrl, s.SupportPhone, s.WhatsAppNumber, s.SupportEmail,
-            s.CurrencyCode, s.PhoneCountryCode, s.TimeZoneId, s.FlatShippingFee, s.FreeShippingThreshold, s.AllowGuestCheckout);
+            s.CurrencyCode, s.PhoneCountryCode, s.TimeZoneId, s.FlatShippingFee, s.FreeShippingThreshold, s.AllowGuestCheckout,
+            s.SmtpHost, s.SmtpPort, s.SmtpFrom, s.SmtpUser, !string.IsNullOrEmpty(s.SmtpPassword));
     }
 }
 
@@ -71,7 +77,12 @@ public sealed record UpdateSettingsCommand(
     string TimeZoneId,
     decimal FlatShippingFee,
     decimal? FreeShippingThreshold,
-    bool AllowGuestCheckout) : ICommand;
+    bool AllowGuestCheckout,
+    string? SmtpHost = null,
+    int SmtpPort = 587,
+    string? SmtpFrom = null,
+    string? SmtpUser = null,
+    string? SmtpPassword = null) : ICommand;
 
 public sealed class UpdateSettingsValidator : AbstractValidator<UpdateSettingsCommand>
 {
@@ -90,6 +101,13 @@ public sealed class UpdateSettingsValidator : AbstractValidator<UpdateSettingsCo
         RuleFor(x => x.TimeZoneId).Cascade(CascadeMode.Stop).NotEmpty().MaximumLength(64)
             .Must(id => TimeZoneInfo.TryFindSystemTimeZoneById(id, out _))
             .WithMessage("Choose a valid time zone.");
+        RuleFor(x => x.SmtpHost).MaximumLength(255);
+        RuleFor(x => x.SmtpPort).InclusiveBetween(1, 65535);
+        RuleFor(x => x.SmtpUser).MaximumLength(255);
+        RuleFor(x => x.SmtpPassword).MaximumLength(255);
+        // A host with no From address can't send: SmtpClient rejects an empty From at send time.
+        RuleFor(x => x.SmtpFrom).NotEmpty().EmailAddress().MaximumLength(254)
+            .When(x => !string.IsNullOrWhiteSpace(x.SmtpHost));
     }
 }
 
@@ -117,6 +135,7 @@ internal sealed class UpdateSettingsHandler(IAppDbContext db) : ICommandHandler<
         settings.UpdateContact(supportPhone.Value, whatsApp.Value, command.SupportEmail);
         settings.UpdateCommerce(command.CurrencyCode, command.FlatShippingFee, command.FreeShippingThreshold, command.AllowGuestCheckout);
         settings.UpdateTimeZone(command.TimeZoneId);
+        settings.UpdateSmtp(command.SmtpHost, command.SmtpPort, command.SmtpFrom, command.SmtpUser, command.SmtpPassword);
         await db.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }

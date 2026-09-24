@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Store.Application.Abstractions;
 using Store.Infrastructure.Identity;
+using Store.Infrastructure.Notifications;
 using Store.Infrastructure.Persistence;
 using Store.Infrastructure.Persistence.Seeding;
 using Store.Infrastructure.Storage;
@@ -33,7 +34,7 @@ public static class DependencyInjection
         services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
         services.AddScoped<IOrderNumberGenerator, SqlOrderNumberGenerator>();
 
-        services.AddIdentity(environment);
+        services.AddIdentity(configuration, environment);
 
         services.AddOptions<FileStorageOptions>()
             .Bind(configuration.GetSection(FileStorageOptions.Section))
@@ -41,17 +42,24 @@ public static class DependencyInjection
         services.AddSingleton<IFileStorage, LocalFileStorage>();
 
         services.Configure<SeedOptions>(configuration.GetSection(SeedOptions.Section));
+        services.Configure<StorefrontOptions>(configuration.GetSection(StorefrontOptions.Section));
+        services.AddScoped<IEmailSender, SmtpEmailSender>();
+        services.AddScoped<IStaffOrderAlerter, SmtpStaffOrderAlerter>();
+        services.AddSingleton<DeferredWorkQueue>();
+        services.AddSingleton<IDeferredWork>(sp => sp.GetRequiredService<DeferredWorkQueue>());
+        services.AddHostedService(sp => sp.GetRequiredService<DeferredWorkQueue>());
+        services.AddScoped<IPasswordResetMailer, PasswordResetMailer>();
         services.AddScoped<DatabaseInitializer>();
         return services;
     }
 
-    private static void AddIdentity(this IServiceCollection services, IHostEnvironment environment)
+    /// <summary>
+    /// Accounts, roles, reset tokens and sign-in over the app database, without the HTTP cookie setup,
+    /// so the application tests run the real thing.
+    /// </summary>
+    internal static void AddIdentityStore(this IServiceCollection services)
     {
-        services.AddHttpContextAccessor();
-        services.AddScoped<ICurrentUser, HttpCurrentUser>();
         services.AddScoped<IIdentityService, IdentityService>();
-
-        services.AddAuthentication(IdentityConstants.ApplicationScheme).AddIdentityCookies();
         services
             .AddIdentityCore<ApplicationUser>(options =>
             {
@@ -66,6 +74,23 @@ public static class DependencyInjection
             .AddEntityFrameworkStores<AppDbContext>()
             .AddSignInManager()
             .AddDefaultTokenProviders();
+    }
+
+    private static void AddIdentity(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+    {
+        services.AddHttpContextAccessor();
+        services.AddScoped<ICurrentUser, HttpCurrentUser>();
+        services.AddIdentityStore();
+
+        // Every cookie the API sets is https-only outside development (the storefront proxies /api, so they are all first-party).
+        var securePolicy = environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
+
+        var authentication = services.AddAuthentication(IdentityConstants.ApplicationScheme);
+        authentication.AddIdentityCookies();
+        authentication.AddGoogleSignIn(configuration, securePolicy);
+
+        // Holds the provider's answer between Google's callback and /api/auth/google/complete (Identity gives it 5 minutes).
+        services.ConfigureExternalCookie(cookie => cookie.Cookie.SecurePolicy = securePolicy);
 
         services.ConfigureApplicationCookie(cookie =>
         {
@@ -75,7 +100,7 @@ public static class DependencyInjection
             // Lax (not Strict) so a customer opening a shared product link arrives signed in.
             // Cross-site POSTs don't carry the cookie, and the API only accepts JSON, which blocks classic CSRF.
             cookie.Cookie.SameSite = SameSiteMode.Lax;
-            cookie.Cookie.SecurePolicy = environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
+            cookie.Cookie.SecurePolicy = securePolicy;
             cookie.ExpireTimeSpan = TimeSpan.FromDays(14);
             cookie.SlidingExpiration = true;
 

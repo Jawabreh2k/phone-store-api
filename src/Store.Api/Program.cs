@@ -56,6 +56,9 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy(Policies.AuthRateLimit, http => RateLimitPartition.GetFixedWindowLimiter(
         http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1) }));
+    options.AddPolicy(Policies.ExternalAuthRateLimit, http => RateLimitPartition.GetFixedWindowLimiter(
+        http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1) }));
     options.AddPolicy(Policies.CheckoutRateLimit, http => RateLimitPartition.GetFixedWindowLimiter(
         http.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1) }));
@@ -82,9 +85,11 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks();
 
-// Behind a reverse proxy (nginx / the Next.js server) the client IP arrives in X-Forwarded-For.
+// Behind a reverse proxy (nginx / the Next.js server) the client IP arrives in X-Forwarded-For. The host the browser
+// used arrives in X-Forwarded-Host (Next.js sets it on /api rewrites), which makes Google's redirect_uri point at the
+// storefront origin. Only loopback proxies are trusted by default; add KnownProxies/KnownNetworks if the API moves.
 builder.Services.Configure<ForwardedHeadersOptions>(o =>
-    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto);
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost);
 
 var app = builder.Build();
 

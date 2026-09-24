@@ -39,11 +39,7 @@ internal sealed class RegisterHandler(IAppDbContext db, IIdentityService identit
             new NewUser(command.Email, command.Password, command.FullName, phone.Value?.Value, command.PreferredLanguage),
             cancellationToken);
 
-        if (result.IsSuccess && command.GuestCartId is { } cartId)
-        {
-            await mergeCart.Handle(new MergeGuestCartCommand(result.Value.Id, cartId), cancellationToken);
-        }
-
+        await GuestCartMerge.AfterSignInAsync(mergeCart, result, command.GuestCartId, cancellationToken);
         return result;
     }
 }
@@ -66,11 +62,7 @@ internal sealed class LoginHandler(IIdentityService identity, ICommandHandler<Me
     {
         var result = await identity.SignInAsync(command.Email, command.Password, command.RememberMe, cancellationToken);
 
-        if (result.IsSuccess && command.GuestCartId is { } cartId)
-        {
-            await mergeCart.Handle(new MergeGuestCartCommand(result.Value.Id, cartId), cancellationToken);
-        }
-
+        await GuestCartMerge.AfterSignInAsync(mergeCart, result, command.GuestCartId, cancellationToken);
         return result;
     }
 }

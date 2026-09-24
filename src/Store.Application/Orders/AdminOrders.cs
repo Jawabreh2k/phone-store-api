@@ -7,6 +7,14 @@ using Store.Domain.Orders;
 
 namespace Store.Application.Orders;
 
+public sealed record GetPendingOrderCountQuery : IQuery<int>;
+
+internal sealed class GetPendingOrderCountHandler(IAppDbContext db) : IQueryHandler<GetPendingOrderCountQuery, int>
+{
+    public async Task<Result<int>> Handle(GetPendingOrderCountQuery query, CancellationToken cancellationToken) =>
+        await db.Orders.AsNoTracking().CountAsync(o => o.Status == OrderStatus.Pending, cancellationToken);
+}
+
 public sealed record GetAdminOrdersQuery(
     OrderStatus? Status = null,
     string? Search = null,
@@ -112,6 +120,7 @@ internal sealed class ChangeOrderStatusHandler(IAppDbContext db, ICurrentUser us
             OrderStatus.Shipped => order.Ship(actor, now, command.Note),
             OrderStatus.Delivered => order.Deliver(actor, now, command.Note),
             OrderStatus.Cancelled => order.Cancel(actor, byCustomer: false, command.Note, now),
+            OrderStatus.Returned => order.Return(actor, now, command.Note),
             _ => OrderErrors.InvalidTransition(order.Status, command.Status),
         };
 
@@ -120,7 +129,7 @@ internal sealed class ChangeOrderStatusHandler(IAppDbContext db, ICurrentUser us
             return result;
         }
 
-        if (command.Status == OrderStatus.Cancelled)
+        if (command.Status is OrderStatus.Cancelled or OrderStatus.Returned)
         {
             await StockRelease.ReleaseAsync(db, order, cancellationToken);
         }

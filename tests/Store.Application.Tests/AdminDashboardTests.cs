@@ -68,6 +68,26 @@ public sealed class AdminDashboardTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ReturnedOrders_AreExcludedFromSalesCountsAndChart()
+    {
+        _host.User.UserId = Guid.NewGuid();
+        _host.Clock.SetUtcNow(new DateTimeOffset(2026, 9, 23, 9, 0, 0, TimeSpan.Zero));
+        await PlaceAtAsync("RN13-128-BK");
+
+        var orderId = await _host.Db(db => db.Orders.OrderByDescending(o => o.PlacedAt).Select(o => o.Id).FirstAsync());
+        (await _host.Send(new ChangeOrderStatusCommand(orderId, OrderStatus.Confirmed, null))).IsSuccess.ShouldBeTrue();
+        (await _host.Send(new ChangeOrderStatusCommand(orderId, OrderStatus.Shipped, null))).IsSuccess.ShouldBeTrue();
+        (await _host.Send(new ChangeOrderStatusCommand(orderId, OrderStatus.Delivered, null))).IsSuccess.ShouldBeTrue();
+        (await _host.Send(new ChangeOrderStatusCommand(orderId, OrderStatus.Returned, "Defective"))).IsSuccess.ShouldBeTrue();
+
+        var dash = await Dashboard();
+        dash.TodaySummary.Orders.ShouldBe(0);
+        dash.TodaySummary.Revenue.ShouldBeEmpty();
+        dash.Last14Days[^1].Orders.ShouldBe(0);
+        dash.TopSellers.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task MultiCurrency_RevenueIsNotSummedAcrossCurrencies()
     {
         _host.Clock.SetUtcNow(new DateTimeOffset(2026, 9, 23, 9, 0, 0, TimeSpan.Zero));

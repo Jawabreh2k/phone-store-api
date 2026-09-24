@@ -1,5 +1,7 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Store.Application.Abstractions;
 using Store.Application.Carts;
 using Store.Application.Common;
@@ -58,10 +60,12 @@ public sealed class PlaceOrderValidator : AbstractValidator<PlaceOrderCommand>
 /// Turns the cart into an order in one transaction: re-prices every line from the catalogue,
 /// reserves stock, snapshots names and prices onto the order and empties the cart.
 /// </summary>
-internal sealed class PlaceOrderHandler(
+internal sealed partial class PlaceOrderHandler(
     IAppDbContext db,
     IOrderNumberGenerator orderNumbers,
-    TimeProvider clock) : ICommandHandler<PlaceOrderCommand, OrderPlacedDto>
+    IDeferredWork deferred,
+    TimeProvider clock,
+    ILogger<PlaceOrderHandler> logger) : ICommandHandler<PlaceOrderCommand, OrderPlacedDto>
 {
     public static readonly Error StockChanged = Error.Conflict(
         "orders.stock_changed", "Stock changed while you were checking out. Please review your cart and try again.");
@@ -134,6 +138,19 @@ internal sealed class PlaceOrderHandler(
             return StockChanged;
         }
 
+        var orderId = order.Id;
+        deferred.Run(async (sp, ct) =>
+        {
+            try
+            {
+                await sp.GetRequiredService<IStaffOrderAlerter>().AlertNewOrderAsync(orderId, ct);
+            }
+            catch (Exception ex)
+            {
+                LogStaffAlertFailed(logger, orderId, ex);
+            }
+        });
+
         return new OrderPlacedDto(order.Id, order.OrderNumber, trackingToken, order.Total, order.CurrencyCode);
     }
 
@@ -198,4 +215,7 @@ internal sealed class PlaceOrderHandler(
 
         db.CustomerAddresses.Add(saved);
     }
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Failed to alert staff about new order {OrderId}.")]
+    private static partial void LogStaffAlertFailed(ILogger logger, Guid orderId, Exception exception);
 }

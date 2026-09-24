@@ -113,6 +113,11 @@ internal sealed class StoreSettingsConfiguration : IEntityTypeConfiguration<Stor
         builder.Property(s => s.SupportEmail).HasMaxLength(256);
         builder.Property(s => s.CurrencyCode).HasMaxLength(3).IsFixedLength().IsUnicode(false);
         builder.Property(s => s.TimeZoneId).HasMaxLength(64).IsUnicode(false);
+        builder.Property(s => s.SmtpHost).HasMaxLength(255).IsUnicode(false);
+        builder.Property(s => s.SmtpPort).HasDefaultValue(587);
+        builder.Property(s => s.SmtpFrom).HasMaxLength(254);
+        builder.Property(s => s.SmtpUser).HasMaxLength(255);
+        builder.Property(s => s.SmtpPassword).HasMaxLength(255);
     }
 }
 

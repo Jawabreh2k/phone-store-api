@@ -9,6 +9,7 @@ public enum OrderStatus
     Shipped = 3,
     Delivered = 4,
     Cancelled = 5,
+    Returned = 6,
 }
 
 /// <summary>Only cash on delivery exists today. The field is here so a card gateway can be added without migrating orders.</summary>
@@ -91,6 +92,7 @@ public static class OrderErrors
     public static readonly Error InvalidLine = Error.Validation("orders.invalid_line", "Every order line needs a positive price and quantity.");
     public static readonly Error InvalidCurrency = Error.Validation("orders.invalid_currency", "The order currency must be a 3-letter ISO 4217 code.");
     public static readonly Error CannotCancelAfterShipping = Error.Conflict("orders.cannot_cancel", "The order can no longer be cancelled.");
+    public static readonly Error CannotReturn = Error.Conflict("orders.cannot_return", "The order can only be returned after delivery.");
     public static readonly Error CustomerCanOnlyCancelPending = Error.Conflict("orders.customer_cancel_pending_only", "You can only cancel an order before the store confirms it. Please contact us.");
     public static readonly Error GuestCheckoutDisabled = Error.Unauthorized("orders.guest_checkout_disabled", "Please sign in to place an order.");
 

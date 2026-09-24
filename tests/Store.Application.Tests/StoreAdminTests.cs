@@ -77,6 +77,43 @@ public sealed class StoreAdminTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Settings_Smtp_RequiresFromWhenHostIsSet_AndPasswordIsWriteOnly()
+    {
+        var update = new UpdateSettingsCommand(
+            new LocalizedTextDto("Jawwal Store", "متجر جوال"), null, null, null,
+            "jod", "962", "Asia/Amman", 2.5m, 75m, AllowGuestCheckout: true,
+            SmtpHost: "smtp.example.com", SmtpPort: 2525, SmtpFrom: "orders@example.com", SmtpUser: "orders", SmtpPassword: "hunter2");
+
+        // A host with no From can't send.
+        var missingFrom = await _host.Send(update with { SmtpFrom = null });
+        ((ValidationError)missingFrom.Error).Errors.Keys.ShouldContain("smtpFrom");
+
+        (await _host.Send(update)).IsSuccess.ShouldBeTrue();
+        var saved = (await _host.Query<GetAdminSettingsQuery, AdminSettingsDto>(new GetAdminSettingsQuery())).Value;
+        saved.SmtpHost.ShouldBe("smtp.example.com");
+        saved.SmtpPort.ShouldBe(2525);
+        saved.SmtpFrom.ShouldBe("orders@example.com");
+        saved.SmtpUser.ShouldBe("orders");
+        saved.HasSmtpPassword.ShouldBeTrue();
+
+        // A null password on the wire (the form never gets the saved one back) leaves it untouched.
+        (await _host.Send(update with { SmtpPort = 2526, SmtpPassword = null })).IsSuccess.ShouldBeTrue();
+        var afterUnrelatedSave = (await _host.Query<GetAdminSettingsQuery, AdminSettingsDto>(new GetAdminSettingsQuery())).Value;
+        afterUnrelatedSave.SmtpPort.ShouldBe(2526);
+        afterUnrelatedSave.HasSmtpPassword.ShouldBeTrue();
+
+        // An empty string explicitly clears it.
+        (await _host.Send(update with { SmtpPassword = "" })).IsSuccess.ShouldBeTrue();
+        var cleared = (await _host.Query<GetAdminSettingsQuery, AdminSettingsDto>(new GetAdminSettingsQuery())).Value;
+        cleared.HasSmtpPassword.ShouldBeFalse();
+
+        // An empty host turns alerts off again and no longer needs a From address.
+        (await _host.Send(update with { SmtpHost = "", SmtpFrom = null })).IsSuccess.ShouldBeTrue();
+        var off = (await _host.Query<GetAdminSettingsQuery, AdminSettingsDto>(new GetAdminSettingsQuery())).Value;
+        off.SmtpHost.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task Logo_UploadReplacesAndDeletesThePreviousFile_RemoveClearsIt()
     {
         byte[] png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];

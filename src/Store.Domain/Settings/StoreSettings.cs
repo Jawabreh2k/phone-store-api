@@ -21,6 +21,7 @@ public sealed class StoreSettings : AuditableEntity
         CurrencyCode = currencyCode;
         AllowGuestCheckout = true;
         TimeZoneId = "Asia/Amman";
+        SmtpPort = 587;
         UpdateRegion(phoneCountryCode);
     }
 
@@ -59,6 +60,14 @@ public sealed class StoreSettings : AuditableEntity
 
     /// <summary>IANA time zone id (e.g. "Asia/Amman") used for "today" in the admin dashboard.</summary>
     public string TimeZoneId { get; private set; } = null!;
+
+    /// <summary>Outbound mail for staff new-order alerts. Null host disables alerts entirely.</summary>
+    public string? SmtpHost { get; private set; }
+
+    public int SmtpPort { get; private set; }
+    public string? SmtpFrom { get; private set; }
+    public string? SmtpUser { get; private set; }
+    public string? SmtpPassword { get; private set; }
 
     public decimal ShippingFeeFor(decimal subtotal) =>
         FreeShippingThreshold is { } threshold && subtotal >= threshold ? 0m : FlatShippingFee;
@@ -101,5 +110,22 @@ public sealed class StoreSettings : AuditableEntity
         }
 
         TimeZoneId = id;
+    }
+
+    /// <summary>
+    /// A null <paramref name="password"/> keeps the saved one (the admin form never receives it back to resend);
+    /// an empty string clears it. Everything else is replaced outright.
+    /// </summary>
+    public void UpdateSmtp(string? host, int port, string? from, string? user, string? password)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(port);
+        SmtpHost = string.IsNullOrWhiteSpace(host) ? null : host.Trim();
+        SmtpPort = port;
+        SmtpFrom = string.IsNullOrWhiteSpace(from) ? null : from.Trim();
+        SmtpUser = string.IsNullOrWhiteSpace(user) ? null : user.Trim();
+        if (password is not null)
+        {
+            SmtpPassword = password.Length == 0 ? null : password;
+        }
     }
 }
