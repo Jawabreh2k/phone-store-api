@@ -1006,8 +1006,8 @@ namespace Store.Infrastructure.Persistence.Migrations
                         .HasColumnType("varchar(255)");
 
                     b.Property<string>("SmtpPassword")
-                        .HasMaxLength(255)
-                        .HasColumnType("nvarchar(255)");
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(max)");
 
                     b.Property<int>("SmtpPort")
                         .ValueGeneratedOnAdd()

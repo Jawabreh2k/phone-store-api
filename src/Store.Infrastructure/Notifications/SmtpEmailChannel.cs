@@ -18,7 +18,7 @@ namespace Store.Infrastructure.Notifications;
 /// to staff. The Message-Id is derived from the outbox id, so a resend after a crash is recognisable as the same message.
 /// </para>
 /// </summary>
-internal sealed class SmtpEmailChannel(IAppDbContext db, TimeProvider clock) : INotificationChannel
+internal sealed class SmtpEmailChannel(IAppDbContext db, TimeProvider clock, ISecretProtector secrets) : INotificationChannel
 {
     public NotificationChannel Channel => NotificationChannel.Email;
 
@@ -59,7 +59,8 @@ internal sealed class SmtpEmailChannel(IAppDbContext db, TimeProvider clock) : I
             await client.ConnectAsync(settings.SmtpHost, settings.SmtpPort, SecureSocketOptions.Auto, cancellationToken);
             if (!string.IsNullOrWhiteSpace(settings.SmtpUser))
             {
-                await client.AuthenticateAsync(settings.SmtpUser, settings.SmtpPassword ?? string.Empty, cancellationToken);
+                var password = settings.SmtpPassword is null ? null : secrets.Unprotect(settings.SmtpPassword);
+                await client.AuthenticateAsync(settings.SmtpUser, password ?? string.Empty, cancellationToken);
             }
 
             await client.SendAsync(mail, cancellationToken);

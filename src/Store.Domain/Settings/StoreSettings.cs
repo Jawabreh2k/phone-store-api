@@ -67,6 +67,11 @@ public sealed class StoreSettings : AuditableEntity
     public int SmtpPort { get; private set; }
     public string? SmtpFrom { get; private set; }
     public string? SmtpUser { get; private set; }
+
+    /// <summary>
+    /// Protected at rest (ASP.NET Data Protection, same as <c>OutboxEntry.Secret</c>); callers must encrypt before
+    /// passing it to <see cref="UpdateSmtp"/> and decrypt it themselves when they need the raw password.
+    /// </summary>
     public string? SmtpPassword { get; private set; }
 
     public decimal ShippingFeeFor(decimal subtotal) =>
@@ -114,7 +119,8 @@ public sealed class StoreSettings : AuditableEntity
 
     /// <summary>
     /// A null <paramref name="password"/> keeps the saved one (the admin form never receives it back to resend);
-    /// an empty string clears it. Everything else is replaced outright.
+    /// an empty string clears it. Everything else is replaced outright. <paramref name="password"/> must already
+    /// be protected (encrypted) by the caller, since this entity is not where secrets get encrypted.
     /// </summary>
     public void UpdateSmtp(string? host, int port, string? from, string? user, string? password)
     {

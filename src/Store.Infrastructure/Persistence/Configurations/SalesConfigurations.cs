@@ -119,7 +119,8 @@ internal sealed class StoreSettingsConfiguration : IEntityTypeConfiguration<Stor
         builder.Property(s => s.SmtpPort).HasDefaultValue(587);
         builder.Property(s => s.SmtpFrom).HasMaxLength(254);
         builder.Property(s => s.SmtpUser).HasMaxLength(255);
-        builder.Property(s => s.SmtpPassword).HasMaxLength(255);
+        // Encrypted at rest (ASP.NET Data Protection), so the stored ciphertext is longer than the raw password.
+        builder.Property(s => s.SmtpPassword).IsUnicode(false);
     }
 }
 

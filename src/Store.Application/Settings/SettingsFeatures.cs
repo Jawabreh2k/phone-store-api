@@ -111,7 +111,7 @@ public sealed class UpdateSettingsValidator : AbstractValidator<UpdateSettingsCo
     }
 }
 
-internal sealed class UpdateSettingsHandler(IAppDbContext db) : ICommandHandler<UpdateSettingsCommand>
+internal sealed class UpdateSettingsHandler(IAppDbContext db, ISecretProtector secrets) : ICommandHandler<UpdateSettingsCommand>
 {
     public async Task<Result> Handle(UpdateSettingsCommand command, CancellationToken cancellationToken)
     {
@@ -135,7 +135,10 @@ internal sealed class UpdateSettingsHandler(IAppDbContext db) : ICommandHandler<
         settings.UpdateContact(supportPhone.Value, whatsApp.Value, command.SupportEmail);
         settings.UpdateCommerce(command.CurrencyCode, command.FlatShippingFee, command.FreeShippingThreshold, command.AllowGuestCheckout);
         settings.UpdateTimeZone(command.TimeZoneId);
-        settings.UpdateSmtp(command.SmtpHost, command.SmtpPort, command.SmtpFrom, command.SmtpUser, command.SmtpPassword);
+        // Encrypted at rest, like OutboxEntry.Secret; null keeps the saved one, empty clears it, so only a real
+        // password value is protected.
+        var protectedPassword = string.IsNullOrEmpty(command.SmtpPassword) ? command.SmtpPassword : secrets.Protect(command.SmtpPassword);
+        settings.UpdateSmtp(command.SmtpHost, command.SmtpPort, command.SmtpFrom, command.SmtpUser, protectedPassword);
         await db.SaveChangesAsync(cancellationToken);
         return Result.Success();
     }
