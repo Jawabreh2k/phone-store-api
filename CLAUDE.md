@@ -3,7 +3,7 @@
 See README.md for layout and run instructions.
 
 ## Backend conventions
-- HTTP layer is thin controllers (Emdad-style shape): one controller per resource in `Store.Api/Controllers` (admin under `Controllers/Admin`, `[Authorize(Policy = Policies.Admin)]`), inheriting `ApiControllerBase`. An action binds the request (bodies are records in `Contracts/Requests.cs`), injects exactly one handler with `[FromServices]`, and returns `FromResult(...)` / `CreatedFromResult(...)`. No business logic, EF or Infrastructure in controllers (architecture test enforces it).
+- HTTP layer is thin controllers: one controller per resource in `Store.Api/Controllers` (admin under `Controllers/Admin`, `[Authorize(Policy = Policies.Admin)]`), inheriting `ApiControllerBase`. An action binds the request (bodies are records in `Contracts/Requests.cs`), injects exactly one handler with `[FromServices]`, and returns `FromResult(...)` / `CreatedFromResult(...)`. No business logic, EF or Infrastructure in controllers (architecture test enforces it).
 - Everything is deny-by-default (fallback policy); public controllers/actions need `[AllowAnonymous]`.
 - Phone input: validators use `.Phone()` (structural check); handlers convert with `PhoneInput.Normalize(settings, value, "field")` and store `PhoneNumber.Value` (E.164). Never persist raw phone strings.
 - Money on orders is always shown with the order's own `CurrencyCode`, never the current store setting.
